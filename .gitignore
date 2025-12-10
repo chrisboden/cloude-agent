@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+*.local
+
+# Railway
+.railway/
+
+.specstory
+
+test_*
+report.md
+plan.md
+peregian-hub-annual-report-2025.html
+.claude/skills/artifacts-builder
+.claude/skills/hub-assistant
+tools/hub_tools.py

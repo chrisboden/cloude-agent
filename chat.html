@@ -1,0 +1,2577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clawed - Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Söhne:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #242424;
+            --bg-tertiary: #2d2d2d;
+            --bg-hover: #363636;
+            --text-primary: #ececec;
+            --text-secondary: #a0a0a0;
+            --text-muted: #6b6b6b;
+            --accent: #d97757;
+            --accent-hover: #e8967a;
+            --border: #3d3d3d;
+            --user-msg: #2a4a5e;
+            --assistant-msg: #1e1e1e;
+            --success: #4ade80;
+            --error: #f87171;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Söhne', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .app {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .sidebar-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .logo svg {
+            width: 28px;
+            height: 28px;
+        }
+
+        .api-key-section {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .api-key-section label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .api-key-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .api-key-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .api-key-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .api-status {
+            margin-top: 8px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .api-status.connected {
+            color: var(--success);
+        }
+
+        .api-status.disconnected {
+            color: var(--text-muted);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .model-section {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .model-section > label:first-child {
+            display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .permission-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 8px;
+            line-height: 1.4;
+        }
+
+        .model-select {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: inherit;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0a0a0' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 36px;
+        }
+
+        .model-select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .model-select option {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            padding: 8px;
+        }
+
+        .model-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 6px;
+            background: rgba(217, 119, 87, 0.15);
+            border-radius: 4px;
+            font-size: 10px;
+            color: var(--accent);
+            margin-left: 8px;
+            font-weight: 500;
+        }
+
+        /* Skills section */
+        .skills-section {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .skills-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .skills-header label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .add-skill-btn {
+            background: none;
+            border: none;
+            color: var(--accent);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .add-skill-btn:hover {
+            background: rgba(217, 119, 87, 0.15);
+        }
+
+        .skills-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .skill-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 10px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            font-size: 12px;
+        }
+
+        .skill-item-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .skill-item-name {
+            color: var(--text-primary);
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .skill-item-desc {
+            color: var(--text-muted);
+            font-size: 10px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .skill-item-actions {
+            display: flex;
+            gap: 4px;
+            margin-left: 8px;
+        }
+
+        .skill-item-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+        }
+
+        .skill-item-btn:hover {
+            color: var(--text-primary);
+            background: var(--bg-hover);
+        }
+
+        .skill-item-btn.delete:hover {
+            color: var(--error);
+        }
+
+        .no-skills {
+            color: var(--text-muted);
+            font-size: 12px;
+            text-align: center;
+            padding: 12px;
+        }
+
+        .skills-drop-zone {
+            border: 2px dashed transparent;
+            border-radius: 8px;
+            transition: all 0.2s;
+            margin-top: 8px;
+        }
+
+        .skills-drop-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(217, 119, 87, 0.1);
+        }
+
+        .skills-drop-hint {
+            display: none;
+            text-align: center;
+            padding: 16px 8px;
+            color: var(--accent);
+            font-size: 12px;
+        }
+
+        .skills-drop-zone.drag-over .skills-drop-hint {
+            display: block;
+        }
+
+        .skills-drop-zone.drag-over .skills-list {
+            display: none;
+        }
+
+        .skill-file-count {
+            font-size: 10px;
+            color: var(--text-muted);
+            background: var(--bg-hover);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: auto;
+        }
+
+        .skill-item-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+        }
+
+        /* Upload zone in modal */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 16px;
+        }
+
+        .upload-zone:hover {
+            border-color: var(--accent);
+            background: rgba(217, 119, 87, 0.05);
+        }
+
+        .upload-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(217, 119, 87, 0.1);
+        }
+
+        .upload-zone-icon {
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .upload-zone-text {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .upload-zone-hint {
+            color: var(--text-muted);
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        .upload-zone.has-file {
+            border-color: var(--success);
+            background: rgba(74, 222, 128, 0.1);
+        }
+
+        .upload-zone.has-file .upload-zone-icon {
+            color: var(--success);
+        }
+
+        .or-divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 16px 0;
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+        .or-divider::before,
+        .or-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-header h2 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 4px;
+        }
+
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .form-textarea {
+            min-height: 200px;
+            resize: vertical;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .form-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            border: none;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .new-chat-btn {
+            margin: 16px;
+            padding: 12px 16px;
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: background 0.2s;
+        }
+
+        .new-chat-btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .chats-section {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .chats-section h3 {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 8px 12px;
+        }
+
+        .chat-item {
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 4px;
+            transition: background 0.15s;
+        }
+
+        .chat-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .chat-item.active {
+            background: var(--bg-tertiary);
+        }
+
+        .chat-item-title {
+            font-size: 14px;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .chat-item-date {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .chat-item-actions {
+            display: none;
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .chat-item {
+            position: relative;
+        }
+
+        .chat-item:hover .chat-item-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .delete-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+        }
+
+        .delete-btn:hover {
+            color: var(--error);
+            background: rgba(248, 113, 113, 0.1);
+        }
+
+        /* Main content */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-primary);
+            min-width: 0;
+        }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .welcome {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            text-align: center;
+            padding: 40px;
+        }
+
+        .welcome h1 {
+            font-size: 28px;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        .welcome p {
+            font-size: 16px;
+            max-width: 500px;
+            line-height: 1.6;
+        }
+
+        .messages {
+            max-width: 800px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .message {
+            margin-bottom: 24px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .message-actions {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .copy-btn {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 8px;
+            font-size: 12px;
+            transition: all 0.15s;
+        }
+
+        .copy-btn:hover {
+            color: var(--text-primary);
+            border-color: var(--accent);
+            background: var(--bg-tertiary);
+        }
+
+        .message-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .message.user .message-avatar {
+            background: var(--user-msg);
+            color: white;
+        }
+
+        .message.assistant .message-avatar {
+            background: var(--accent);
+            color: white;
+        }
+
+        .message-role {
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .message-content {
+            padding-left: 44px;
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-primary);
+        }
+
+        .message-content p {
+            margin-bottom: 12px;
+        }
+
+        .message-content p:last-child {
+            margin-bottom: 0;
+        }
+
+        .message-content code {
+            background: var(--bg-tertiary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+        }
+
+        .message-content pre {
+            background: var(--bg-secondary);
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 12px 0;
+        }
+
+        .message-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .message-content ul, .message-content ol {
+            margin: 12px 0;
+            padding-left: 24px;
+        }
+
+        .message-content li {
+            margin-bottom: 6px;
+        }
+
+        .message-content strong {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .message-files {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+            padding-left: 44px;
+        }
+
+        .file-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .tools-used {
+            margin-top: 12px;
+            padding-left: 44px;
+        }
+
+        .tool-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            background: rgba(217, 119, 87, 0.15);
+            border-radius: 4px;
+            font-size: 11px;
+            color: var(--accent);
+            margin-right: 6px;
+        }
+
+        /* Input area */
+        .input-area {
+            padding: 16px 24px 24px;
+            background: var(--bg-primary);
+        }
+
+        .input-wrapper {
+            max-width: 800px;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        .drop-zone {
+            border: 2px dashed transparent;
+            border-radius: 16px;
+            transition: all 0.2s;
+        }
+
+        .drop-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(217, 119, 87, 0.05);
+        }
+
+        .input-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .attached-files {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 12px 16px 0;
+        }
+
+        .attached-file {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .attached-file-name {
+            max-width: 200px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .remove-file {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 2px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .remove-file:hover {
+            color: var(--error);
+        }
+
+        .input-row {
+            display: flex;
+            align-items: flex-end;
+            padding: 12px 16px;
+            gap: 12px;
+        }
+
+        .message-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-size: 15px;
+            font-family: inherit;
+            resize: none;
+            min-height: 24px;
+            max-height: 200px;
+            line-height: 1.5;
+        }
+
+        .message-input:focus {
+            outline: none;
+        }
+
+        .message-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .input-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .attach-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+
+        .attach-btn:hover {
+            color: var(--text-primary);
+            background: var(--bg-tertiary);
+        }
+
+        .send-btn {
+            background: var(--accent);
+            border: none;
+            color: white;
+            padding: 10px;
+            border-radius: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+
+        .send-btn:hover:not(:disabled) {
+            background: var(--accent-hover);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .input-hint {
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 12px;
+        }
+
+        /* Loading state */
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding-left: 44px;
+            color: var(--text-secondary);
+        }
+
+        .loading-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .loading-dots span {
+            width: 6px;
+            height: 6px;
+            background: var(--accent);
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .loading-dots span:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+
+        .loading-dots span:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+
+        @keyframes bounce {
+            0%, 80%, 100% {
+                transform: scale(0);
+            }
+            40% {
+                transform: scale(1);
+            }
+        }
+
+        /* Status indicator */
+        .status-indicator {
+            color: var(--text-muted);
+            font-style: italic;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        /* Empty state */
+        .no-chats {
+            padding: 24px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        /* Settings button */
+        .settings-btn {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 50;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 10px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+
+        .settings-btn:hover {
+            color: var(--text-primary);
+            background: var(--bg-tertiary);
+            border-color: var(--accent);
+        }
+
+        /* Settings Modal */
+        .settings-modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .settings-section {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .settings-section:last-child {
+            border-bottom: none;
+        }
+
+        .settings-section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .settings-section-header h3 {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .settings-body {
+            padding: 0;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: -280px;
+                top: 0;
+                height: 100%;
+                z-index: 100;
+                transition: left 0.3s;
+            }
+
+            .sidebar.open {
+                left: 0;
+            }
+
+            .menu-toggle {
+                display: block;
+            }
+
+            .settings-btn {
+                top: 12px;
+                right: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                        <path d="M2 17l10 5 10-5"/>
+                        <path d="M2 12l10 5 10-5"/>
+                    </svg>
+                    Clawed
+                </div>
+            </div>
+
+            <div class="model-section">
+                <label>Model</label>
+                <select class="model-select" id="modelSelect">
+                    <option value="claude-sonnet-4-5-20250514">Claude Sonnet 4.5</option>
+                    <option value="claude-opus-4-5-20250514">Claude Opus 4.5</option>
+                    <option value="claude-haiku-4-5-20250514">Claude Haiku 4.5</option>
+                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                    <option value="claude-opus-4-20250514">Claude Opus 4</option>
+                    <option value="claude-3-7-sonnet-20250219">Claude 3.7 Sonnet</option>
+                    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                    <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                </select>
+            </div>
+
+            <div class="model-section">
+                <label>Permissions</label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="bypassPermissions">
+                    <span>Bypass all permission checks</span>
+                </label>
+                <div class="permission-hint">When enabled, Claude can use all tools without approval. Use with caution.</div>
+            </div>
+
+            <button class="new-chat-btn" onclick="newChat()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                New Chat
+            </button>
+
+            <div class="chats-section">
+                <h3>Recent Chats</h3>
+                <div id="chatsList"></div>
+            </div>
+        </aside>
+
+        <main class="main">
+            <!-- Settings Button -->
+            <button class="settings-btn" onclick="openSettingsModal()" title="Settings">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+            </button>
+
+            <div class="chat-container" id="chatContainer">
+                <div class="welcome" id="welcome">
+                    <h1>Welcome to Clawed</h1>
+                    <p>A cloud-hosted version of the Claude Code Agent.</p>
+                </div>
+                <div class="messages" id="messages"></div>
+            </div>
+
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <div class="drop-zone" id="dropZone">
+                        <div class="input-container">
+                            <div class="attached-files" id="attachedFiles"></div>
+                            <div class="input-row">
+                                <textarea 
+                                    class="message-input" 
+                                    id="messageInput" 
+                                    placeholder="Message Clawed..."
+                                    rows="1"
+                                ></textarea>
+                                <div class="input-actions">
+                                    <button class="attach-btn" onclick="document.getElementById('fileInput').click()">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                                        </svg>
+                                    </button>
+                                    <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <input type="file" id="fileInput" multiple hidden onchange="handleFileSelect(event)">
+                    <div class="input-hint">Press Enter to send, Shift+Enter for new line</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Skill Modal -->
+    <div class="modal-overlay" id="skillModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="skillModalTitle">Add Skill</h2>
+                <button class="modal-close" onclick="closeSkillModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Zip Upload -->
+                <div id="uploadSection">
+                    <div class="upload-zone" id="skillUploadZone" onclick="document.getElementById('skillZipInput').click()">
+                        <div class="upload-zone-icon">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                        </div>
+                        <div class="upload-zone-text" id="uploadZoneText">Drop skill .zip here or click to browse</div>
+                        <div class="upload-zone-hint">Zip should contain SKILL.md and any supporting files</div>
+                    </div>
+                    <input type="file" id="skillZipInput" accept=".zip" hidden onchange="handleSkillZipSelect(event)">
+                    
+                    <div class="or-divider">or create manually</div>
+                </div>
+
+                <!-- Manual Entry -->
+                <div id="manualSection">
+                    <div class="form-group">
+                        <label for="skillId">Skill ID</label>
+                        <input type="text" class="form-input" id="skillId" placeholder="my-skill-name">
+                        <div class="form-hint">Lowercase, alphanumeric, dashes and underscores only</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="skillContent">SKILL.md Content</label>
+                        <textarea class="form-input form-textarea" id="skillContent" placeholder="---
+name: My Skill
+description: Does something useful when asked about X
+---
+
+# My Skill
+
+Instructions for Claude on how to use this skill..."></textarea>
+                        <div class="form-hint">Use YAML frontmatter for name and description, then Markdown for instructions</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeSkillModal()">Cancel</button>
+                <button class="btn btn-primary" id="saveSkillBtn" onclick="saveSkill()">Save Skill</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="settings-modal">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="modal-close" onclick="closeSettingsModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="settings-body">
+                <!-- API Key Section -->
+                <div class="settings-section">
+                    <div class="settings-section-header">
+                        <h3>API Key</h3>
+                    </div>
+                    <input type="password" class="api-key-input" id="apiKey" placeholder="Enter your API key...">
+                    <div class="api-status disconnected" id="apiStatus">
+                        <span class="status-dot"></span>
+                        <span id="statusText">Not connected</span>
+                    </div>
+                </div>
+
+                <!-- Skills Section -->
+                <div class="settings-section">
+                    <div class="settings-section-header">
+                        <h3>Skills</h3>
+                        <button class="add-skill-btn" onclick="openSkillModal()" title="Add Skill">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="skills-drop-zone" id="skillsDropZone">
+                        <div class="skills-drop-hint">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom: 4px;">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                            <div>Drop .zip to install</div>
+                        </div>
+                        <div class="skills-list" id="skillsList">
+                            <div class="no-skills">No skills installed<br><small>Drop a .zip file here</small></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Workspace Files Section -->
+                <div class="settings-section">
+                    <div class="settings-section-header">
+                        <h3>Workspace Files</h3>
+                        <button class="add-skill-btn" onclick="loadWorkspaceFiles()" title="Refresh">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="skills-list" id="workspaceFiles">
+                        <div class="no-skills">No files yet<br><small>Agent creates files here</small></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'https://clawed-api-production.up.railway.app';
+        
+        let currentSessionId = null;
+        let attachedFiles = [];
+        let isLoading = false;
+        const messageMarkdown = {};
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadApiKey();
+            loadModel();
+            loadChats();
+            loadSkills();
+            loadWorkspaceFiles();
+            setupEventListeners();
+            autoResizeTextarea();
+        });
+
+        function setupEventListeners() {
+            const input = document.getElementById('messageInput');
+            const apiKeyInput = document.getElementById('apiKey');
+            const dropZone = document.getElementById('dropZone');
+
+            input.addEventListener('input', () => {
+                autoResizeTextarea();
+                updateSendButton();
+            });
+
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+
+            apiKeyInput.addEventListener('input', () => {
+                saveApiKey();
+                checkConnection();
+            });
+
+            // Model selection
+            const modelSelect = document.getElementById('modelSelect');
+            modelSelect.addEventListener('change', saveModel);
+
+            // Drag and drop for chat files
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('drag-over');
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                handleFiles(e.dataTransfer.files);
+            });
+
+            // Skills drop zone
+            const skillsDropZone = document.getElementById('skillsDropZone');
+            skillsDropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                skillsDropZone.classList.add('drag-over');
+            });
+
+            skillsDropZone.addEventListener('dragleave', (e) => {
+                if (!skillsDropZone.contains(e.relatedTarget)) {
+                    skillsDropZone.classList.remove('drag-over');
+                }
+            });
+
+            skillsDropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                skillsDropZone.classList.remove('drag-over');
+                handleSkillDrop(e.dataTransfer.files);
+            });
+
+            // Skill upload zone in modal
+            const skillUploadZone = document.getElementById('skillUploadZone');
+            skillUploadZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                skillUploadZone.classList.add('drag-over');
+            });
+
+            skillUploadZone.addEventListener('dragleave', () => {
+                skillUploadZone.classList.remove('drag-over');
+            });
+
+            skillUploadZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                skillUploadZone.classList.remove('drag-over');
+                handleSkillZipDrop(e.dataTransfer.files);
+            });
+        }
+
+        function autoResizeTextarea() {
+            const textarea = document.getElementById('messageInput');
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+        }
+
+        function updateSendButton() {
+            const input = document.getElementById('messageInput');
+            const sendBtn = document.getElementById('sendBtn');
+            const hasContent = input.value.trim() || attachedFiles.length > 0;
+            const hasApiKey = document.getElementById('apiKey').value.trim();
+            sendBtn.disabled = !hasContent || !hasApiKey || isLoading;
+        }
+
+        // API Key management
+        function loadApiKey() {
+            const saved = localStorage.getItem('clawed_api_key');
+            if (saved) {
+                document.getElementById('apiKey').value = saved;
+                checkConnection();
+            }
+        }
+
+        function saveApiKey() {
+            const key = document.getElementById('apiKey').value;
+            localStorage.setItem('clawed_api_key', key);
+        }
+
+        // Model management
+        function loadModel() {
+            const saved = localStorage.getItem('clawed_model');
+            if (saved) {
+                document.getElementById('modelSelect').value = saved;
+            }
+        }
+
+        function saveModel() {
+            const model = document.getElementById('modelSelect').value;
+            localStorage.setItem('clawed_model', model);
+        }
+
+        function getSelectedModel() {
+            return document.getElementById('modelSelect').value;
+        }
+
+        function getModelDisplayName(modelId) {
+            const names = {
+                'claude-sonnet-4-5-20250514': 'Sonnet 4.5',
+                'claude-opus-4-5-20250514': 'Opus 4.5',
+                'claude-haiku-4-5-20250514': 'Haiku 4.5',
+                'claude-sonnet-4-20250514': 'Sonnet 4',
+                'claude-opus-4-20250514': 'Opus 4',
+                'claude-3-7-sonnet-20250219': '3.7 Sonnet',
+                'claude-3-5-sonnet-20241022': '3.5 Sonnet',
+                'claude-3-5-haiku-20241022': '3.5 Haiku'
+            };
+            return names[modelId] || modelId;
+        }
+
+        // Skill management
+        let editingSkillId = null;
+
+        async function loadSkills() {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) {
+                renderSkills([]);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/skills`, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    renderSkills(data.skills || []);
+                } else {
+                    renderSkills([]);
+                }
+            } catch {
+                renderSkills([]);
+            }
+        }
+
+        // Workspace file management
+        async function loadWorkspaceFiles() {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) {
+                renderWorkspaceFiles([]);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/workspace`, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    renderWorkspaceFiles(data.files || []);
+                } else {
+                    renderWorkspaceFiles([]);
+                }
+            } catch {
+                renderWorkspaceFiles([]);
+            }
+        }
+
+        function renderWorkspaceFiles(files) {
+            const container = document.getElementById('workspaceFiles');
+            
+            if (files.length === 0) {
+                container.innerHTML = '<div class="no-skills">No files yet<br><small>Agent creates files here</small></div>';
+                return;
+            }
+
+            container.innerHTML = files.map(file => `
+                <div class="skill-item">
+                    <div class="skill-item-row">
+                        <div class="skill-item-info">
+                            <div class="skill-item-name">${file.is_dir ? '📁' : '📄'} ${escapeHtml(file.name)}</div>
+                            <div class="skill-item-desc">${file.size ? formatFileSize(file.size) : 'Directory'}</div>
+                        </div>
+                    </div>
+                    <div class="skill-item-actions">
+                        ${!file.is_dir ? `
+                            <button class="skill-item-btn" onclick="downloadWorkspaceFile('${escapeHtml(file.path)}')" title="Download">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7 10 12 15 17 10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                            </button>
+                            <button class="skill-item-btn" onclick="openWorkspaceFile('${escapeHtml(file.path)}')" title="Open in new tab">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="7 17 17 7"></polyline>
+                                    <polyline points="7 7 17 7 17 17"></polyline>
+                                </svg>
+                            </button>
+                            <button class="skill-item-btn" onclick="copyWorkspaceLink('${escapeHtml(file.path)}')" title="Copy link">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M10 13a5 5 0 0 0 7.54.54l1.42-1.42a5 5 0 0 0-7.07-7.07L10.5 6"/>
+                                    <path d="M14 11a5 5 0 0 0-7.54-.54l-1.42 1.42a5 5 0 0 0 7.07 7.07L13.5 18"/>
+                                </svg>
+                            </button>
+                            <button class="skill-item-btn" onclick="copyWorkspaceCurl('${escapeHtml(file.path)}')" title="Copy curl">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M3 5h12"/>
+                                    <path d="M9 3v2"/>
+                                    <path d="M9 14v2"/>
+                                    <path d="M3 16h12"/>
+                                    <path d="m16 21 2-2 2 2"/>
+                                    <path d="M18 17v4"/>
+                                </svg>
+                            </button>
+                        ` : ''}
+                        <button class="skill-item-btn delete" onclick="deleteWorkspaceFile('${escapeHtml(file.path)}')" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        async function downloadWorkspaceFile(filePath) {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) return;
+
+            try {
+                const response = await fetch(`${API_URL}/workspace/${encodeURIComponent(filePath)}`, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filePath.split('/').pop();
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }
+            } catch (e) {
+                console.error('Download failed:', e);
+            }
+        }
+
+        function copyWorkspaceLink(filePath) {
+            const url = `${API_URL}/workspace/${encodeURIComponent(filePath)}`;
+            navigator.clipboard.writeText(url).catch(() => {});
+        }
+
+        async function openWorkspaceFile(filePath) {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) return;
+            const url = `${API_URL}/workspace/${encodeURIComponent(filePath)}`;
+            try {
+                const res = await fetch(url, { headers: { 'X-API-Key': apiKey } });
+                if (!res.ok) return;
+                const blob = await res.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                window.open(blobUrl, '_blank');
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 60 * 1000);
+            } catch (e) {
+                console.error('Open failed:', e);
+            }
+        }
+
+        function copyWorkspaceCurl(filePath) {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) return;
+            const url = `${API_URL}/workspace/${encodeURIComponent(filePath)}`;
+            const cmd = `curl -X GET \"${url}\" -H \"X-API-Key: ${apiKey}\" -o ${filePath.split('/').pop()}`;
+            navigator.clipboard.writeText(cmd).catch(() => {});
+        }
+
+        async function deleteWorkspaceFile(filePath) {
+            if (!confirm(`Delete ${filePath}?`)) return;
+            
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) return;
+
+            try {
+                const response = await fetch(`${API_URL}/workspace/${encodeURIComponent(filePath)}`, {
+                    method: 'DELETE',
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (response.ok) {
+                    loadWorkspaceFiles();
+                }
+            } catch (e) {
+                console.error('Delete failed:', e);
+            }
+        }
+
+        function renderSkills(skills) {
+            const container = document.getElementById('skillsList');
+            
+            if (skills.length === 0) {
+                container.innerHTML = '<div class="no-skills">No skills installed<br><small>Drop a .zip file here</small></div>';
+                return;
+            }
+
+            container.innerHTML = skills.map(skill => `
+                <div class="skill-item">
+                    <div class="skill-item-row">
+                        <div class="skill-item-info">
+                            <div class="skill-item-name">${escapeHtml(skill.name)}</div>
+                            <div class="skill-item-desc">${escapeHtml(skill.description || '')}</div>
+                        </div>
+                        ${skill.file_count > 1 ? `<span class="skill-file-count">${skill.file_count} files</span>` : ''}
+                    </div>
+                    <div class="skill-item-actions">
+                        <button class="skill-item-btn" onclick="downloadSkill('${skill.id}')" title="Download">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                        </button>
+                        <button class="skill-item-btn" onclick="editSkill('${skill.id}')" title="Edit">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            </svg>
+                        </button>
+                        <button class="skill-item-btn delete" onclick="deleteSkill('${skill.id}')" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Skill zip handling
+        let pendingSkillZip = null;
+
+        function handleSkillDrop(files) {
+            for (const file of files) {
+                if (file.name.endsWith('.zip')) {
+                    uploadSkillZip(file);
+                    return;
+                }
+            }
+            alert('Please drop a .zip file');
+        }
+
+        function handleSkillZipSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                handleSkillZipDrop([file]);
+            }
+        }
+
+        function handleSkillZipDrop(files) {
+            for (const file of files) {
+                if (file.name.endsWith('.zip')) {
+                    pendingSkillZip = file;
+                    const uploadZone = document.getElementById('skillUploadZone');
+                    uploadZone.classList.add('has-file');
+                    document.getElementById('uploadZoneText').textContent = file.name;
+                    // Hide manual section when zip is selected
+                    document.getElementById('manualSection').style.display = 'none';
+                    document.getElementById('saveSkillBtn').textContent = 'Upload Skill';
+                    return;
+                }
+            }
+            alert('Please drop a .zip file');
+        }
+
+        async function uploadSkillZip(file) {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) {
+                alert('Please enter your API key first');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`${API_URL}/skills/upload`, {
+                    method: 'POST',
+                    headers: { 'X-API-Key': apiKey },
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    loadSkills();
+                    alert(`Skill "${data.id}" installed (${data.file_count} files)`);
+                } else {
+                    alert('Failed to upload skill: ' + (data.detail || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Failed to upload skill: ' + error.message);
+            }
+        }
+
+        async function downloadSkill(skillId) {
+            const apiKey = document.getElementById('apiKey').value;
+            try {
+                const response = await fetch(`${API_URL}/skills/${skillId}/download`, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${skillId}.zip`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } else {
+                    alert('Failed to download skill');
+                }
+            } catch (error) {
+                alert('Failed to download skill: ' + error.message);
+            }
+        }
+
+        function openSkillModal(skillId = null) {
+            editingSkillId = skillId;
+            pendingSkillZip = null;
+            
+            // Reset modal state
+            document.getElementById('skillModalTitle').textContent = skillId ? 'Edit Skill' : 'Add Skill';
+            document.getElementById('skillId').value = '';
+            document.getElementById('skillContent').value = '';
+            document.getElementById('skillId').disabled = false;
+            document.getElementById('manualSection').style.display = 'block';
+            document.getElementById('saveSkillBtn').textContent = 'Save Skill';
+            
+            // Reset upload zone
+            const uploadZone = document.getElementById('skillUploadZone');
+            uploadZone.classList.remove('has-file');
+            document.getElementById('uploadZoneText').textContent = 'Drop skill .zip here or click to browse';
+            document.getElementById('skillZipInput').value = '';
+
+            // Hide upload section when editing
+            document.getElementById('uploadSection').style.display = skillId ? 'none' : 'block';
+
+            if (skillId) {
+                loadSkillForEdit(skillId);
+            }
+
+            document.getElementById('skillModal').classList.add('active');
+        }
+
+        function closeSkillModal() {
+            document.getElementById('skillModal').classList.remove('active');
+            editingSkillId = null;
+            pendingSkillZip = null;
+        }
+
+        // Settings modal functions
+        function openSettingsModal() {
+            document.getElementById('settingsModal').classList.add('active');
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settingsModal').classList.remove('active');
+        }
+
+        // Close settings modal on outside click or Escape
+        document.getElementById('settingsModal').addEventListener('click', (e) => {
+            if (e.target.id === 'settingsModal') {
+                closeSettingsModal();
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeSettingsModal();
+                closeSkillModal();
+            }
+        });
+
+        async function loadSkillForEdit(skillId) {
+            const apiKey = document.getElementById('apiKey').value;
+            try {
+                const response = await fetch(`${API_URL}/skills/${skillId}`, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (response.ok) {
+                    const skill = await response.json();
+                    document.getElementById('skillId').value = skill.id;
+                    document.getElementById('skillId').disabled = true;
+                    document.getElementById('skillContent').value = skill.content;
+                }
+            } catch (error) {
+                alert('Failed to load skill: ' + error.message);
+            }
+        }
+
+        async function editSkill(skillId) {
+            openSkillModal(skillId);
+        }
+
+        async function saveSkill() {
+            const apiKey = document.getElementById('apiKey').value;
+            
+            // If there's a pending zip file, upload it
+            if (pendingSkillZip) {
+                await uploadSkillZip(pendingSkillZip);
+                closeSkillModal();
+                return;
+            }
+            
+            // Otherwise, do manual save
+            const skillId = document.getElementById('skillId').value.trim();
+            const content = document.getElementById('skillContent').value;
+
+            if (!skillId) {
+                alert('Please enter a skill ID');
+                return;
+            }
+
+            if (!content) {
+                alert('Please enter skill content');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/skills`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': apiKey
+                    },
+                    body: JSON.stringify({ id: skillId, content })
+                });
+
+                if (response.ok) {
+                    closeSkillModal();
+                    loadSkills();
+                } else {
+                    const data = await response.json();
+                    alert('Failed to save skill: ' + (data.detail || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Failed to save skill: ' + error.message);
+            }
+        }
+
+        async function deleteSkill(skillId) {
+            if (!confirm(`Delete skill "${skillId}"?`)) return;
+
+            const apiKey = document.getElementById('apiKey').value;
+            try {
+                const response = await fetch(`${API_URL}/skills/${skillId}`, {
+                    method: 'DELETE',
+                    headers: { 'X-API-Key': apiKey }
+                });
+
+                if (response.ok) {
+                    loadSkills();
+                } else {
+                    const data = await response.json();
+                    alert('Failed to delete skill: ' + (data.detail || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Failed to delete skill: ' + error.message);
+            }
+        }
+
+        async function checkConnection() {
+            const apiKey = document.getElementById('apiKey').value;
+            const statusEl = document.getElementById('apiStatus');
+            const statusText = document.getElementById('statusText');
+
+            if (!apiKey) {
+                statusEl.className = 'api-status disconnected';
+                statusText.textContent = 'Not connected';
+                renderSkills([]);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                if (response.ok) {
+                    statusEl.className = 'api-status connected';
+                    statusText.textContent = 'Connected';
+                    loadSkills();
+                    loadWorkspaceFiles();
+                } else {
+                    statusEl.className = 'api-status disconnected';
+                    statusText.textContent = 'Connection failed';
+                    renderSkills([]);
+                }
+            } catch {
+                statusEl.className = 'api-status disconnected';
+                statusText.textContent = 'Connection failed';
+                renderSkills([]);
+            }
+            updateSendButton();
+        }
+
+        // Chat management
+        function loadChats() {
+            const chats = JSON.parse(localStorage.getItem('clawed_chats') || '[]');
+            renderChatsList(chats);
+        }
+
+        function saveChats(chats) {
+            localStorage.setItem('clawed_chats', JSON.stringify(chats));
+            renderChatsList(chats);
+        }
+
+        function renderChatsList(chats) {
+            const container = document.getElementById('chatsList');
+            
+            if (chats.length === 0) {
+                container.innerHTML = '<div class="no-chats">No conversations yet</div>';
+                return;
+            }
+
+            container.innerHTML = chats.map(chat => `
+                <div class="chat-item ${chat.id === currentSessionId ? 'active' : ''}" onclick="loadChat('${chat.id}')">
+                    <div class="chat-item-title">${escapeHtml(chat.title)}</div>
+                    <div class="chat-item-date">${formatDate(chat.updatedAt)}</div>
+                    <div class="chat-item-actions">
+                        <button class="delete-btn" onclick="event.stopPropagation(); deleteChat('${chat.id}')">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function newChat() {
+            currentSessionId = 'chat-' + Date.now();
+            document.getElementById('messages').innerHTML = '';
+            document.getElementById('welcome').style.display = 'flex';
+            document.getElementById('messageInput').focus();
+            loadChats();
+        }
+
+        function loadChat(chatId) {
+            const chats = JSON.parse(localStorage.getItem('clawed_chats') || '[]');
+            const chat = chats.find(c => c.id === chatId);
+            
+            if (!chat) return;
+
+            currentSessionId = chatId;
+            document.getElementById('welcome').style.display = 'none';
+            
+            const messagesEl = document.getElementById('messages');
+            messagesEl.innerHTML = chat.messages.map(msg => renderMessage(msg)).join('');
+            
+            scrollToBottom();
+            loadChats();
+        }
+
+        function deleteChat(chatId) {
+            let chats = JSON.parse(localStorage.getItem('clawed_chats') || '[]');
+            chats = chats.filter(c => c.id !== chatId);
+            saveChats(chats);
+
+            if (chatId === currentSessionId) {
+                newChat();
+            }
+        }
+
+        function updateChatInStorage(sessionId, userMessage, assistantResponse) {
+            let chats = JSON.parse(localStorage.getItem('clawed_chats') || '[]');
+            let chat = chats.find(c => c.id === sessionId);
+
+            if (!chat) {
+                chat = {
+                    id: sessionId,
+                    title: userMessage.substring(0, 50) + (userMessage.length > 50 ? '...' : ''),
+                    messages: [],
+                    createdAt: Date.now(),
+                    updatedAt: Date.now()
+                };
+                chats.unshift(chat);
+            }
+
+            chat.messages.push({ role: 'user', content: userMessage });
+            chat.messages.push({ 
+                role: 'assistant', 
+                content: assistantResponse.response,
+                tools: assistantResponse.tools_used,
+                model: assistantResponse.model
+            });
+            chat.updatedAt = Date.now();
+
+            // Keep only last 50 chats
+            chats = chats.slice(0, 50);
+            saveChats(chats);
+        }
+
+        // File handling
+        function handleFileSelect(event) {
+            handleFiles(event.target.files);
+        }
+
+        function handleFiles(fileList) {
+            for (const file of fileList) {
+                if (attachedFiles.length >= 5) {
+                    alert('Maximum 5 files allowed');
+                    break;
+                }
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    attachedFiles.push({
+                        name: file.name,
+                        type: file.type,
+                        content: e.target.result
+                    });
+                    renderAttachedFiles();
+                    updateSendButton();
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function renderAttachedFiles() {
+            const container = document.getElementById('attachedFiles');
+            
+            if (attachedFiles.length === 0) {
+                container.innerHTML = '';
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'flex';
+            container.innerHTML = attachedFiles.map((file, index) => `
+                <div class="attached-file">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    <span class="attached-file-name">${escapeHtml(file.name)}</span>
+                    <button class="remove-file" onclick="removeFile(${index})">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function removeFile(index) {
+            attachedFiles.splice(index, 1);
+            renderAttachedFiles();
+            updateSendButton();
+        }
+
+        // Send message
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const apiKey = document.getElementById('apiKey').value;
+            let message = input.value.trim();
+
+            if ((!message && attachedFiles.length === 0) || !apiKey || isLoading) return;
+
+            // Separate images from other files
+            const imageFiles = attachedFiles.filter(f => f.type.startsWith('image/'));
+            const otherFiles = attachedFiles.filter(f => !f.type.startsWith('image/'));
+
+            // Append non-image file info to message
+            if (otherFiles.length > 0) {
+                const fileDescriptions = otherFiles.map(f => `[Attached file: ${f.name}]`).join('\n');
+                message = message ? `${message}\n\n${fileDescriptions}` : fileDescriptions;
+            }
+
+            // If only images and no message, add a default prompt
+            if (!message && imageFiles.length > 0) {
+                message = "Please analyze this image.";
+            }
+
+            if (!currentSessionId) {
+                currentSessionId = 'chat-' + Date.now();
+            }
+
+            // Clear input and files
+            input.value = '';
+            const sentFiles = [...attachedFiles];
+            attachedFiles = [];
+            renderAttachedFiles();
+            autoResizeTextarea();
+            updateSendButton();
+
+            // Hide welcome
+            document.getElementById('welcome').style.display = 'none';
+
+            // Add user message
+            const messagesEl = document.getElementById('messages');
+            messagesEl.innerHTML += renderMessage({ role: 'user', content: message, files: sentFiles });
+
+            // Add loading indicator
+            const loadingId = 'loading-' + Date.now();
+            messagesEl.innerHTML += `
+                <div class="message assistant" id="${loadingId}">
+                    <div class="message-header">
+                        <div class="message-avatar">C</div>
+                        <div class="message-role">Clawed</div>
+                    </div>
+                    <div class="loading">
+                        <div class="loading-dots">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                        <span>Thinking...</span>
+                    </div>
+                </div>
+            `;
+            scrollToBottom();
+
+            isLoading = true;
+            updateSendButton();
+
+            const selectedModel = getSelectedModel();
+
+            // Prepare images array for API
+            const images = imageFiles.map(f => {
+                // Extract base64 data from dataURL (remove "data:image/jpeg;base64," prefix)
+                const base64Data = f.content.split(',')[1];
+                return {
+                    data: base64Data,
+                    media_type: f.type || 'image/jpeg'
+                };
+            });
+
+            try {
+                // Get permission mode
+                const bypassPermissions = document.getElementById('bypassPermissions').checked;
+                const permissionMode = bypassPermissions ? 'bypassPermissions' : 'acceptEdits';
+
+                const requestBody = {
+                    session_id: currentSessionId,
+                    message: message,
+                    model: selectedModel,
+                    context: {
+                        source: 'web-chat',
+                        user_name: 'User',
+                        permission_mode: permissionMode
+                    }
+                };
+
+                // Only include images if there are any
+                if (images.length > 0) {
+                    requestBody.images = images;
+                }
+
+                // Use streaming endpoint
+                const response = await fetch(`${API_URL}/chat/stream`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': apiKey
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Request failed');
+                }
+
+                // Remove loading indicator and add empty assistant message
+                document.getElementById(loadingId)?.remove();
+                const assistantMsgId = 'assistant-' + Date.now();
+                messageMarkdown[assistantMsgId] = '';
+                messagesEl.innerHTML += `
+                    <div class="message assistant" id="${assistantMsgId}" data-markdown="">
+                        <div class="message-header">
+                            <div class="message-avatar">C</div>
+                            <div class="message-role">Clawed<span class="model-badge">${getModelDisplayName(selectedModel)}</span></div>
+                            <div class="message-actions">
+                                <button class="copy-btn" id="${assistantMsgId}-copy" onclick="copyMessageMarkdown('${assistantMsgId}')">Copy</button>
+                            </div>
+                        </div>
+                        <div class="message-content" id="${assistantMsgId}-content"></div>
+                        <div class="tools-used" id="${assistantMsgId}-tools" style="display:none;"></div>
+                    </div>
+                `;
+                
+                const contentEl = document.getElementById(`${assistantMsgId}-content`);
+                const toolsEl = document.getElementById(`${assistantMsgId}-tools`);
+                let fullResponse = '';
+                let toolsUsed = [];
+                let currentStatus = '';
+
+                // Status messages for UI
+                const statusMessages = {
+                    'connecting': '🔌 Connecting...',
+                    'sending': '📤 Sending request...',
+                    'processing': '🧠 Processing...',
+                    'ready': '✨ Claude is thinking...'
+                };
+
+                // Show initial status
+                contentEl.innerHTML = '<div class="status-indicator">🔌 Connecting...</div>';
+
+                // Read SSE stream
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const event = JSON.parse(line.slice(6));
+                                
+                                if (event.type === 'status') {
+                                    currentStatus = event.status;
+                                    const statusText = statusMessages[event.status] || event.status;
+                                    if (!fullResponse) {
+                                        contentEl.innerHTML = `<div class="status-indicator">${statusText}</div>`;
+                                    }
+                                } else if (event.type === 'text') {
+                                    fullResponse += event.text;
+                                    contentEl.innerHTML = formatContent(fullResponse);
+                                    messageMarkdown[assistantMsgId] = fullResponse;
+                                    const msgEl = document.getElementById(assistantMsgId);
+                                    if (msgEl) {
+                                        msgEl.dataset.markdown = encodeURIComponent(fullResponse);
+                                    }
+                                    scrollToBottom();
+                                } else if (event.type === 'tool') {
+                                    // Show tool with status
+                                    const toolStatus = event.status === 'started' ? '⏳' : '✅';
+                                    if (event.status === 'started') {
+                                        toolsUsed.push(event.name);
+                                        // Show working indicator if no text yet
+                                        if (!fullResponse) {
+                                            contentEl.innerHTML = `<div class="status-indicator">🔧 Using ${event.name}...</div>`;
+                                        }
+                                    }
+                                    toolsEl.style.display = 'block';
+                                    toolsEl.innerHTML = toolsUsed.map((t, i) => {
+                                        const isLast = i === toolsUsed.length - 1;
+                                        const icon = isLast && event.status === 'started' ? '⏳' : '✅';
+                                        return `<span class="tool-badge">${icon} ${escapeHtml(t)}</span>`;
+                                    }).join('');
+                                    scrollToBottom();
+                                } else if (event.type === 'done') {
+                                    updateChatInStorage(currentSessionId, message, { 
+                                        response: fullResponse, 
+                                        tools_used: toolsUsed,
+                                        model: selectedModel 
+                                    });
+                                    // Refresh workspace files in case agent created new files
+                                    loadWorkspaceFiles();
+                                } else if (event.type === 'error') {
+                                    contentEl.innerHTML = formatContent(`Error: ${event.error}`);
+                                }
+                            } catch (e) {
+                                console.error('Failed to parse SSE event:', e);
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                document.getElementById(loadingId)?.remove();
+                messagesEl.innerHTML += renderMessage({ 
+                    role: 'assistant', 
+                    content: `Error: ${error.message}`,
+                    isError: true
+                });
+            }
+
+            isLoading = false;
+            updateSendButton();
+            scrollToBottom();
+        }
+
+        function renderMessage(msg) {
+            const isUser = msg.role === 'user';
+            const messageId = msg.id || ('msg-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+            const avatar = isUser ? 'U' : 'C';
+            const role = isUser ? 'You' : 'Clawed';
+            const markdown = msg.content || '';
+            const content = formatContent(markdown);
+            const encodedMarkdown = encodeURIComponent(markdown);
+
+            let modelHtml = '';
+            if (!isUser && msg.model) {
+                modelHtml = `<span class="model-badge">${getModelDisplayName(msg.model)}</span>`;
+            }
+
+            let filesHtml = '';
+            if (msg.files && msg.files.length > 0) {
+                filesHtml = `
+                    <div class="message-files">
+                        ${msg.files.map(f => `
+                            <div class="file-badge">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                    <polyline points="14 2 14 8 20 8"/>
+                                </svg>
+                                ${escapeHtml(f.name)}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            let toolsHtml = '';
+            if (msg.tools && msg.tools.length > 0) {
+                toolsHtml = `
+                    <div class="tools-used">
+                        ${msg.tools.map(t => `<span class="tool-badge">🔧 ${escapeHtml(t)}</span>`).join('')}
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="message ${msg.role}${msg.isError ? ' error' : ''}" id="${messageId}" data-markdown="${encodedMarkdown}">
+                    <div class="message-header">
+                        <div class="message-avatar">${avatar}</div>
+                        <div class="message-role">${role}${modelHtml}</div>
+                        ${!isUser ? `<div class="message-actions"><button class="copy-btn" id="${messageId}-copy" onclick="copyMessageMarkdown('${messageId}')">Copy</button></div>` : ''}
+                    </div>
+                    <div class="message-content">${content}</div>
+                    ${filesHtml}
+                    ${toolsHtml}
+                </div>
+            `;
+        }
+
+        function formatContent(text) {
+            if (window.marked && typeof marked.parse === 'function') {
+                marked.setOptions({ breaks: true });
+                return marked.parse(text || '');
+            }
+
+            // Fallback minimal formatting
+            let html = escapeHtml(text || '');
+            html = html.replace(/\n/g, '<br>');
+            return `<p>${html}</p>`;
+        }
+
+        function copyMessageMarkdown(messageId) {
+            const btn = document.getElementById(`${messageId}-copy`);
+            const container = document.getElementById(messageId);
+
+            let markdown = messageMarkdown[messageId] || '';
+            if (!markdown && container && container.dataset && container.dataset.markdown) {
+                markdown = decodeURIComponent(container.dataset.markdown);
+            }
+
+            if (!markdown) return;
+
+            navigator.clipboard.writeText(markdown).then(() => {
+                if (btn) {
+                    const original = btn.textContent;
+                    btn.textContent = 'Copied';
+                    setTimeout(() => { btn.textContent = original; }, 1200);
+                }
+            }).catch(() => {});
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatDate(timestamp) {
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = now - date;
+
+            if (diff < 60000) return 'Just now';
+            if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+            if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+            if (diff < 604800000) return Math.floor(diff / 86400000) + 'd ago';
+            
+            return date.toLocaleDateString();
+        }
+
+        function scrollToBottom() {
+            const container = document.getElementById('chatContainer');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Initialize with a new chat session
+        newChat();
+    </script>
+</body>
+</html>
+

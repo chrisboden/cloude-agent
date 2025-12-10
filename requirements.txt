@@ -1,0 +1,8 @@
+claude-code-sdk>=0.0.25
+fastapi
+uvicorn[standard]
+redis
+pydantic
+httpx
+python-multipart
+
