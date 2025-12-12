@@ -480,21 +480,9 @@ async def delete_workspace_file(file_path: str):
 
 # Session management endpoints
 @app.get("/sessions", dependencies=[Depends(verify_api_key)])
-async def list_sessions(debug: bool = False):
+async def list_sessions():
     """List all Claude sessions ordered by modified date (newest first)."""
     sessions = agent_manager.list_sessions()
-    if debug:
-        from pathlib import Path
-        sessions_dir = agent_manager._get_sessions_dir()
-        return {
-            "sessions": sessions,
-            "debug": {
-                "sessions_dir": str(sessions_dir),
-                "exists": sessions_dir.exists(),
-                "home": str(Path.home()),
-                "workspace": str(agent_manager.WORKSPACE_DIR if hasattr(agent_manager, 'WORKSPACE_DIR') else 'N/A'),
-            }
-        }
     return {"sessions": sessions}
 
 
