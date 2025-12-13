@@ -6,7 +6,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
-from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions, query
+from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
 from claude_code_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock, SystemMessage, UserMessage
 import redis.asyncio as redis
 
@@ -77,8 +77,8 @@ class AgentManager:
         )
     
     async def chat(
-        self,
-        user_session_id: str,
+        self, 
+        user_session_id: str, 
         message: str,
         images: Optional[list[dict]] = None,
         context: Optional[dict] = None,
@@ -87,104 +87,85 @@ class AgentManager:
         # Check for existing session
         stored = await self._get_stored_session(user_session_id)
         history = await self._get_conversation_history(user_session_id)
-
-        # Check if message is a slash command (starts with /)
-        is_slash_command = message.strip().startswith('/')
-
-        # Default to acceptEdits (safer), can override to bypassPermissions via API
-        permission_mode = context.get("permission_mode", "acceptEdits") if context else "acceptEdits"
-
-        # Set options for query - cwd enables slash commands from .claude/commands/
-        options = ClaudeCodeOptions(
-            permission_mode=permission_mode,
-            cwd=str(WORKSPACE_DIR),
-            model=model
-        )
-
+        
+        # Build the prompt with context
+        text_content = message
+        if context:
+            source = context.get("source", "unknown")
+            user_name = context.get("user_name", "User")
+            text_content = f"[Context: {user_name} via {source}]\n\n{message}"
+        
+        # If we have history, include it as context
+        if history:
+            history_text = "\n".join([
+                f"{'User' if h['role'] == 'user' else 'Assistant'}: {h['content']}" 
+                for h in history[-10:]  # Last 10 messages for context
+            ])
+            text_content = f"Previous conversation:\n{history_text}\n\nNew message: {text_content}"
+        
+        # Build message content - either string or list with images
+        if images:
+            # Build content array with text and images
+            content: Any = [{"type": "text", "text": text_content}]
+            for img in images:
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.get("media_type", "image/jpeg"),
+                        "data": img["data"]
+                    }
+                })
+        else:
+            content = text_content
+        
         tools_used = []
         response_parts = []
-
-        if is_slash_command and not images:
-            # Use query() for slash commands - it properly handles !` bash execution
-            # The prompt MUST start with the slash command for SDK preprocessing to work
-            # Do NOT prepend context - it breaks slash command detection
-            async for msg in query(prompt=message, options=options):
-                msg_type = getattr(msg, 'type', None)
-
+        
+        # Message generator for ClaudeSDKClient
+        async def message_generator():
+            yield {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": content
+                }
+            }
+        
+        # Use ClaudeSDKClient for proper message handling including images
+        # Default to acceptEdits (safer), can override to bypassPermissions via API
+        permission_mode = context.get("permission_mode", "acceptEdits") if context else "acceptEdits"
+        
+        # Set working directory to workspace for file operations
+        options = ClaudeCodeOptions(
+            permission_mode=permission_mode,
+            cwd=str(WORKSPACE_DIR)
+        )
+        
+        async with ClaudeSDKClient(options) as client:
+            # Send the message via generator
+            await client.query(message_generator())
+            
+            # Process responses
+            async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):
                     for block in msg.content:
                         if isinstance(block, TextBlock):
                             response_parts.append(block.text)
                         elif isinstance(block, ToolUseBlock):
                             tools_used.append(block.name)
-                elif isinstance(msg, ResultMessage):
-                    # Final result - may contain the response
-                    result = getattr(msg, 'result', '')
-                    if result and not response_parts:
-                        response_parts.append(result)
-        else:
-            # Use ClaudeSDKClient for regular messages and image support
-            # Build the prompt with context for non-slash-command messages
-            text_content = message
-            if context:
-                source = context.get("source", "unknown")
-                user_name = context.get("user_name", "User")
-                text_content = f"[Context: {user_name} via {source}]\n\n{message}"
-
-            # If we have history, include it as context
-            if history:
-                history_text = "\n".join([
-                    f"{'User' if h['role'] == 'user' else 'Assistant'}: {h['content']}"
-                    for h in history[-10:]  # Last 10 messages for context
-                ])
-                text_content = f"Previous conversation:\n{history_text}\n\nNew message: {text_content}"
-
-            # Build message content - either string or list with images
-            if images:
-                content: Any = [{"type": "text", "text": text_content}]
-                for img in images:
-                    content.append({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": img.get("media_type", "image/jpeg"),
-                            "data": img["data"]
-                        }
-                    })
-            else:
-                content = text_content
-
-            # Message generator for ClaudeSDKClient
-            async def message_generator():
-                yield {
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": content
-                    }
-                }
-
-            async with ClaudeSDKClient(options) as client:
-                await client.query(message_generator())
-                async for msg in client.receive_response():
-                    if isinstance(msg, AssistantMessage):
-                        for block in msg.content:
-                            if isinstance(block, TextBlock):
-                                response_parts.append(block.text)
-                            elif isinstance(block, ToolUseBlock):
-                                tools_used.append(block.name)
-
+        
         response_text = "".join(response_parts)
-
+        
         # Update conversation history
         history.append({"role": "user", "content": message})
         history.append({"role": "assistant", "content": response_text})
         await self._store_conversation_history(user_session_id, history)
-
+        
         # Update session
         await self._store_session(user_session_id)
         await self._update_session_activity(user_session_id)
-
+        
         return {
             "session_id": user_session_id,
             "response": response_text,
@@ -195,8 +176,8 @@ class AgentManager:
         }
     
     async def chat_stream(
-        self,
-        user_session_id: str,
+        self, 
+        user_session_id: str, 
         message: str,
         images: Optional[list[dict]] = None,
         context: Optional[dict] = None,
@@ -206,107 +187,86 @@ class AgentManager:
         # Check for existing session
         stored = await self._get_stored_session(user_session_id)
         history = await self._get_conversation_history(user_session_id)
-
-        # Check if message is a slash command (starts with /)
-        is_slash_command = message.strip().startswith('/')
-
-        # Default to acceptEdits (safer), can override to bypassPermissions via API
-        permission_mode = context.get("permission_mode", "acceptEdits") if context else "acceptEdits"
-
-        # Set options - cwd enables slash commands from .claude/commands/
-        options = ClaudeCodeOptions(
-            permission_mode=permission_mode,
-            cwd=str(WORKSPACE_DIR),
-            model=model
-        )
-
+        
+        # Build the prompt with context
+        text_content = message
+        if context:
+            source = context.get("source", "unknown")
+            user_name = context.get("user_name", "User")
+            text_content = f"[Context: {user_name} via {source}]\n\n{message}"
+        
+        # If we have history, include it as context
+        if history:
+            history_text = "\n".join([
+                f"{'User' if h['role'] == 'user' else 'Assistant'}: {h['content']}" 
+                for h in history[-10:]
+            ])
+            text_content = f"Previous conversation:\n{history_text}\n\nNew message: {text_content}"
+        
+        # Build message content
+        if images:
+            content: Any = [{"type": "text", "text": text_content}]
+            for img in images:
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.get("media_type", "image/jpeg"),
+                        "data": img["data"]
+                    }
+                })
+        else:
+            content = text_content
+        
+        # Message generator
+        async def message_generator():
+            yield {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": content
+                }
+            }
+        
         tools_used = []
         response_parts = []
-
+        
+        # Default to acceptEdits (safer), can override to bypassPermissions via API
+        permission_mode = context.get("permission_mode", "acceptEdits") if context else "acceptEdits"
+        
+        # Set working directory to workspace for file operations
+        options = ClaudeCodeOptions(
+            permission_mode=permission_mode,
+            cwd=str(WORKSPACE_DIR)
+        )
+        
         # Signal that we're starting
         yield {"type": "status", "status": "connecting"}
-
-        if is_slash_command and not images:
-            # Use query() for slash commands - it properly handles !` bash execution
-            # The prompt MUST start with the slash command for SDK preprocessing to work
+        
+        async with ClaudeSDKClient(options) as client:
+            yield {"type": "status", "status": "sending"}
+            await client.query(message_generator())
             yield {"type": "status", "status": "processing"}
-
-            async for msg in query(prompt=message, options=options):
-                if isinstance(msg, AssistantMessage):
+            
+            async for msg in client.receive_response():
+                if isinstance(msg, SystemMessage):
+                    # System is ready
+                    yield {"type": "status", "status": "ready"}
+                elif isinstance(msg, AssistantMessage):
                     for block in msg.content:
                         if isinstance(block, TextBlock):
                             response_parts.append(block.text)
+                            # Yield text chunk
                             yield {"type": "text", "text": block.text}
                         elif isinstance(block, ToolUseBlock):
                             tools_used.append(block.name)
+                            # Yield tool use with more detail
                             yield {"type": "tool", "name": block.name, "status": "started"}
-                elif isinstance(msg, ResultMessage):
-                    result = getattr(msg, 'result', '')
-                    if result and not response_parts:
-                        response_parts.append(result)
-                        yield {"type": "text", "text": result}
-        else:
-            # Use ClaudeSDKClient for regular messages and image support
-            # Build the prompt with context
-            text_content = message
-            if context:
-                source = context.get("source", "unknown")
-                user_name = context.get("user_name", "User")
-                text_content = f"[Context: {user_name} via {source}]\n\n{message}"
-
-            # If we have history, include it as context
-            if history:
-                history_text = "\n".join([
-                    f"{'User' if h['role'] == 'user' else 'Assistant'}: {h['content']}"
-                    for h in history[-10:]
-                ])
-                text_content = f"Previous conversation:\n{history_text}\n\nNew message: {text_content}"
-
-            # Build message content
-            if images:
-                content: Any = [{"type": "text", "text": text_content}]
-                for img in images:
-                    content.append({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": img.get("media_type", "image/jpeg"),
-                            "data": img["data"]
-                        }
-                    })
-            else:
-                content = text_content
-
-            # Message generator
-            async def message_generator():
-                yield {
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": content
-                    }
-                }
-
-            async with ClaudeSDKClient(options) as client:
-                yield {"type": "status", "status": "sending"}
-                await client.query(message_generator())
-                yield {"type": "status", "status": "processing"}
-
-                async for msg in client.receive_response():
-                    if isinstance(msg, SystemMessage):
-                        yield {"type": "status", "status": "ready"}
-                    elif isinstance(msg, AssistantMessage):
-                        for block in msg.content:
-                            if isinstance(block, TextBlock):
-                                response_parts.append(block.text)
-                                yield {"type": "text", "text": block.text}
-                            elif isinstance(block, ToolUseBlock):
-                                tools_used.append(block.name)
-                                yield {"type": "tool", "name": block.name, "status": "started"}
-                    elif isinstance(msg, UserMessage):
-                        if tools_used:
-                            yield {"type": "tool", "name": tools_used[-1], "status": "completed"}
-
+                elif isinstance(msg, UserMessage):
+                    # Tool result came back
+                    if tools_used:
+                        yield {"type": "tool", "name": tools_used[-1], "status": "completed"}
+        
         response_text = "".join(response_parts)
         
         # Update conversation history
