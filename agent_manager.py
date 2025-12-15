@@ -180,6 +180,14 @@ class AgentManager:
 
         # Default to acceptEdits (safer), can override to bypassPermissions via API
         permission_mode = context.get("permission_mode", "acceptEdits") if context else "acceptEdits"
+
+        # Webhook runs are non-interactive, so ensure we load project permissions rules explicitly.
+        # This avoids hanging on approval prompts when executing approved command helpers.
+        settings_path: Optional[str] = None
+        if (context or {}).get("source") == "webhook":
+            candidate = WORKSPACE_DIR / ".claude" / "settings.json"
+            if candidate.is_file():
+                settings_path = str(candidate)
         
         # Set working directory to workspace for file operations and for discovering .claude/commands/ etc.
         options = ClaudeCodeOptions(
@@ -187,6 +195,7 @@ class AgentManager:
             cwd=str(WORKSPACE_DIR),
             model=(model or None),
             resume=resume_session_id,
+            settings=settings_path,
         )
         
         # query() enables Claude Code preprocessing for slash commands and !` bash execution.

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(date:*)",
+      "Bash(echo:*)",
+      "Bash(grep:*)",
+      "Bash(mkdir:*)",
+      "Bash(python3:*)",
+      "Bash(curl:*)"
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:./.claude/commands/scripts/save_transcript.py*)",
+      "Bash(python3:.claude/commands/scripts/save_transcript.py*)",
+      "Bash(python3 ./.claude/commands/scripts/save_transcript.py*)",
+      "Bash(python3 .claude/commands/scripts/save_transcript.py*)"
+    ]
+  }
+}

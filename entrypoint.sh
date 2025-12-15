@@ -19,6 +19,7 @@ mkdir -p "$CLAUDE_CONFIG_DIR"
 # This keeps "one-click deploy" usable while still allowing runtime edits on the volume.
 DEFAULT_COMMANDS_SRC="/app/.claude/commands"
 DEFAULT_SKILLS_SRC="/app/.claude/skills"
+DEFAULT_SETTINGS_SRC="/app/.claude/settings.json"
 
 if [ -d "$DEFAULT_COMMANDS_SRC" ] && [ -z "$(ls -A "$COMMANDS_DIR" 2>/dev/null || true)" ]; then
     cp -n "$DEFAULT_COMMANDS_SRC"/*.md "$COMMANDS_DIR"/ 2>/dev/null || true
@@ -32,6 +33,13 @@ fi
 
 if [ -d "$DEFAULT_SKILLS_SRC" ] && [ -z "$(ls -A "$SKILLS_DIR" 2>/dev/null || true)" ]; then
     cp -R -n "$DEFAULT_SKILLS_SRC"/* "$SKILLS_DIR"/ 2>/dev/null || true
+fi
+
+# Seed a minimal project settings.json for non-interactive runs (webhook mode can't approve prompts).
+if [ -f "$DEFAULT_SETTINGS_SRC" ]; then
+    mkdir -p "$WORKSPACE_DIR/.claude"
+    cp -n "$DEFAULT_SETTINGS_SRC" "$WORKSPACE_DIR/.claude/settings.json" 2>/dev/null || true
+    cp -n "$DEFAULT_SETTINGS_SRC" "$CLAUDE_CONFIG_DIR/settings.json" 2>/dev/null || true
 fi
 
 # Make all skill scripts executable
@@ -62,5 +70,4 @@ else
 
     exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}
 fi
-
 
