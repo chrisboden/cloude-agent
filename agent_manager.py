@@ -49,10 +49,21 @@ COMMANDS_DIR = Path(os.environ.get("COMMANDS_DIR", str(WORKSPACE_DIR / ".claude"
 _IDENTIFIER_RE = re.compile(r"^[a-z0-9_-]+$")
 
 _WEBHOOK_REQUIRED_ALLOW_RULES: list[str] = [
+    # Keep webhook runs non-interactive by allowing a small set of bash commands used by volume-managed commands.
+    "Bash(cat:*)",
+    "Bash(echo:*)",
+    "Bash(date:*)",
+    "Bash(mkdir:*)",
+    # python3 script helpers (two parsing styles: `python3:<args>` vs `python3 <script>:<args>`)
+    "Bash(python3:./.claude/commands/scripts/*)",
+    "Bash(python3:.claude/commands/scripts/*)",
     "Bash(python3:./.claude/commands/scripts/save_transcript.py*)",
     "Bash(python3:.claude/commands/scripts/save_transcript.py*)",
-    "Bash(python3 ./.claude/commands/scripts/save_transcript.py*)",
-    "Bash(python3 .claude/commands/scripts/save_transcript.py*)",
+    # Some versions of the bash parser treat "python3 <script>" as the command+subcommand.
+    "Bash(python3 ./.claude/commands/scripts/save_transcript.py:*)",
+    "Bash(python3 .claude/commands/scripts/save_transcript.py:*)",
+    "Bash(python3 ./.claude/commands/scripts/*:*)",
+    "Bash(python3 .claude/commands/scripts/*:*)",
 ]
 
 def _format_query_error(*, stderr_text: str, exc: Exception) -> RuntimeError:
