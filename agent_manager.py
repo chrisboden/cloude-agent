@@ -3,6 +3,8 @@ import os
 import shutil
 import zipfile
 import tempfile
+import dataclasses
+import io
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
@@ -38,6 +40,28 @@ SKILLS_DIR = Path(os.environ.get("SKILLS_DIR", str(WORKSPACE_DIR / ".claude" / "
 # Commands directory - prompt templates on the volume
 # Can be overridden via COMMANDS_DIR env var
 COMMANDS_DIR = Path(os.environ.get("COMMANDS_DIR", str(WORKSPACE_DIR / ".claude" / "commands")))
+
+def _format_query_error(*, stderr_text: str, exc: Exception) -> RuntimeError:
+    stderr_text = (stderr_text or "").strip()
+    if stderr_text:
+        return RuntimeError(stderr_text)
+    return RuntimeError(str(exc))
+
+
+async def _collect_query_events(
+    *,
+    prompt: str | Any,
+    options: ClaudeCodeOptions,
+) -> tuple[list[Any], Optional[RuntimeError]]:
+    stderr_buf = io.StringIO()
+    opts = dataclasses.replace(options, debug_stderr=stderr_buf, model=(options.model or None))
+    events: list[Any] = []
+    try:
+        async for msg in query(prompt=prompt, options=opts):
+            events.append(msg)
+    except Exception as e:
+        return events, _format_query_error(stderr_text=stderr_buf.getvalue(), exc=e)
+    return events, None
 
 
 class AgentManager:
@@ -158,7 +182,7 @@ class AgentManager:
         options = ClaudeCodeOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
-            model=model,
+            model=(model or None),
             resume=resume_session_id,
         )
         
@@ -180,7 +204,14 @@ class AgentManager:
         claude_session_id: Optional[str] = None
         usage: dict[str, Any] = {}
 
-        async for msg in query(prompt=prompt, options=options):
+        events, err = await _collect_query_events(prompt=prompt, options=options)
+        if err and options.model and not events:
+            fallback_options = dataclasses.replace(options, model=None)
+            events, err = await _collect_query_events(prompt=prompt, options=fallback_options)
+        if err:
+            raise err
+
+        for msg in events:
             if isinstance(msg, SystemMessage):
                 if msg.subtype == "init":
                     claude_session_id = msg.data.get("session_id") or claude_session_id
@@ -267,7 +298,7 @@ class AgentManager:
         options = ClaudeCodeOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
-            model=model,
+            model=(model or None),
             resume=resume_session_id,
         )
         
@@ -292,30 +323,56 @@ class AgentManager:
         else:
             prompt = text_content
 
+        async def run_stream(current_options: ClaudeCodeOptions):
+            nonlocal claude_session_id, usage
+
+            stderr_buf = io.StringIO()
+            opts = dataclasses.replace(
+                current_options,
+                debug_stderr=stderr_buf,
+                model=(current_options.model or None),
+            )
+            emitted_any_output = False
+            try:
+                async for msg in query(prompt=prompt, options=opts):
+                    if isinstance(msg, SystemMessage):
+                        if msg.subtype == "init":
+                            claude_session_id = msg.data.get("session_id") or claude_session_id
+                            yield {"type": "status", "status": "ready"}
+                    elif isinstance(msg, AssistantMessage):
+                        for block in msg.content:
+                            if isinstance(block, TextBlock):
+                                emitted_any_output = True
+                                response_parts.append(block.text)
+                                yield {"type": "text", "text": block.text}
+                            elif isinstance(block, ToolUseBlock):
+                                emitted_any_output = True
+                                tools_used.append(block.name)
+                                yield {"type": "tool", "name": block.name, "status": "started"}
+                    elif isinstance(msg, UserMessage):
+                        if tools_used:
+                            yield {"type": "tool", "name": tools_used[-1], "status": "completed"}
+                    elif isinstance(msg, ResultMessage):
+                        claude_session_id = msg.session_id or claude_session_id
+                        usage = msg.usage or {"num_turns": msg.num_turns}
+                        if usage.get("num_turns") is None:
+                            usage["num_turns"] = msg.num_turns
+            except Exception as e:
+                stderr_text = stderr_buf.getvalue()
+                if not emitted_any_output and current_options.model:
+                    fallback_options = dataclasses.replace(current_options, model=None)
+                    async for ev in run_stream(fallback_options):
+                        yield ev
+                    return
+                if stderr_text.strip():
+                    raise RuntimeError(stderr_text.strip()) from e
+                raise
+
         claude_session_id: Optional[str] = None
         usage: dict[str, Any] = {}
 
-        async for msg in query(prompt=prompt, options=options):
-            if isinstance(msg, SystemMessage):
-                if msg.subtype == "init":
-                    claude_session_id = msg.data.get("session_id") or claude_session_id
-                    yield {"type": "status", "status": "ready"}
-            elif isinstance(msg, AssistantMessage):
-                for block in msg.content:
-                    if isinstance(block, TextBlock):
-                        response_parts.append(block.text)
-                        yield {"type": "text", "text": block.text}
-                    elif isinstance(block, ToolUseBlock):
-                        tools_used.append(block.name)
-                        yield {"type": "tool", "name": block.name, "status": "started"}
-            elif isinstance(msg, UserMessage):
-                if tools_used:
-                    yield {"type": "tool", "name": tools_used[-1], "status": "completed"}
-            elif isinstance(msg, ResultMessage):
-                claude_session_id = msg.session_id or claude_session_id
-                usage = msg.usage or {"num_turns": msg.num_turns}
-                if usage.get("num_turns") is None:
-                    usage["num_turns"] = msg.num_turns
+        async for ev in run_stream(options):
+            yield ev
         
         response_text = "".join(response_parts)
         

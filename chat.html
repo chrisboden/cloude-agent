@@ -1654,13 +1654,8 @@
             <div class="model-section">
                 <label>Model</label>
                 <select class="model-select" id="modelSelect">
-                    <option value="claude-sonnet-4-5-20250514">Claude Sonnet 4.5</option>
-                    <option value="claude-opus-4-5-20250514">Claude Opus 4.5</option>
-                    <option value="claude-haiku-4-5-20250514">Claude Haiku 4.5</option>
-                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-                    <option value="claude-opus-4-20250514">Claude Opus 4</option>
-                    <option value="claude-3-7-sonnet-20250219">Claude 3.7 Sonnet</option>
-                    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                    <option value="">Default</option>
+                    <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5</option>
                     <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
                 </select>
             </div>
@@ -2054,6 +2049,7 @@ Instructions for Claude on how to use this skill..."></textarea>
             if (saved) {
                 document.getElementById('apiKey').value = saved;
                 checkConnection();
+                loadModelsFromApi();
             }
         }
 
@@ -2063,10 +2059,49 @@ Instructions for Claude on how to use this skill..."></textarea>
         }
 
         // Model management
+        let modelDisplayNames = {};
+
+        async function loadModelsFromApi() {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) return;
+
+            try {
+                const resp = await fetch(`${API_URL}/models`, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const models = data.models || [];
+                if (models.length === 0) return;
+
+                const select = document.getElementById('modelSelect');
+                const saved = localStorage.getItem('clawed_model') || '';
+                const options = ['<option value=\"\">Default</option>'];
+
+                modelDisplayNames = {};
+                for (const m of models) {
+                    if (!m.id) continue;
+                    modelDisplayNames[m.id] = m.display_name || m.id;
+                    options.push(`<option value=\"${escapeHtml(m.id)}\">${escapeHtml(modelDisplayNames[m.id])}</option>`);
+                }
+
+                select.innerHTML = options.join('');
+                const hasSaved = Array.from(select.options).some(o => o.value === saved);
+                select.value = hasSaved ? saved : '';
+            } catch (e) {
+                // ignore; keep static fallback options
+            }
+        }
+
         function loadModel() {
             const saved = localStorage.getItem('clawed_model');
-            if (saved) {
-                document.getElementById('modelSelect').value = saved;
+            const select = document.getElementById('modelSelect');
+            if (!saved) return;
+            const hasOption = Array.from(select.options).some(o => o.value === saved);
+            if (hasOption) {
+                select.value = saved;
+            } else {
+                localStorage.removeItem('clawed_model');
             }
         }
 
@@ -2080,17 +2115,7 @@ Instructions for Claude on how to use this skill..."></textarea>
         }
 
         function getModelDisplayName(modelId) {
-            const names = {
-                'claude-sonnet-4-5-20250514': 'Sonnet 4.5',
-                'claude-opus-4-5-20250514': 'Opus 4.5',
-                'claude-haiku-4-5-20250514': 'Haiku 4.5',
-                'claude-sonnet-4-20250514': 'Sonnet 4',
-                'claude-opus-4-20250514': 'Opus 4',
-                'claude-3-7-sonnet-20250219': '3.7 Sonnet',
-                'claude-3-5-sonnet-20241022': '3.5 Sonnet',
-                'claude-3-5-haiku-20241022': '3.5 Haiku'
-            };
-            return names[modelId] || modelId;
+            return modelDisplayNames[modelId] || modelId;
         }
 
         // Skill management
@@ -3379,13 +3404,16 @@ Instructions for Claude on how to use this skill..."></textarea>
                 const requestBody = {
                     session_id: currentSessionId,
                     message: message,
-                    model: selectedModel,
                     context: {
                         source: 'web-chat',
                         user_name: 'User',
                         permission_mode: permissionMode
                     }
                 };
+
+                if (selectedModel) {
+                    requestBody.model = selectedModel;
+                }
 
                 // Only include images if there are any
                 if (images.length > 0) {

@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +8,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 from agent_manager import AgentManager, WORKSPACE_DIR
+import httpx
 
 
 # Config
@@ -14,6 +16,7 @@ API_KEY = os.environ.get("API_KEY", "dev-key")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
 agent_manager: Optional[AgentManager] = None
+_models_cache: dict = {"fetched_at": 0.0, "models": None, "error": None}
 
 
 @asynccontextmanager
@@ -255,6 +258,56 @@ async def chat_stream(req: ChatRequest):
             "Connection": "keep-alive",
         }
     )
+
+
+@app.get("/models", dependencies=[Depends(verify_api_key)])
+async def list_models(refresh: bool = False):
+    """
+    List available models for the current deployment.
+
+    If `ANTHROPIC_API_KEY` is available, this queries `GET https://api.anthropic.com/v1/models`.
+    Otherwise returns a small fallback list that is known to work in this repo.
+    """
+    cache_ttl_s = 60 * 60
+    now = time.time()
+    if not refresh and _models_cache.get("models") and now - float(_models_cache.get("fetched_at", 0)) < cache_ttl_s:
+        return {"models": _models_cache["models"], "source": "cache"}
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        fallback = [
+            {"id": "claude-sonnet-4-5-20250929", "display_name": "Claude Sonnet 4.5"},
+            {"id": "claude-3-5-haiku-20241022", "display_name": "Claude 3.5 Haiku"},
+        ]
+        _models_cache.update({"fetched_at": now, "models": fallback, "error": "ANTHROPIC_API_KEY not set"})
+        return {"models": fallback, "source": "fallback", "warning": "ANTHROPIC_API_KEY not set; returning fallback list"}
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://api.anthropic.com/v1/models",
+                headers={
+                    "X-Api-Key": api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+                params={"limit": 1000},
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        models = [
+            {"id": m.get("id"), "display_name": m.get("display_name")}
+            for m in (data.get("data") or [])
+            if m.get("id")
+        ]
+        _models_cache.update({"fetched_at": now, "models": models, "error": None})
+        return {"models": models, "source": "anthropic"}
+    except Exception as e:
+        fallback = [
+            {"id": "claude-sonnet-4-5-20250929", "display_name": "Claude Sonnet 4.5"},
+            {"id": "claude-3-5-haiku-20241022", "display_name": "Claude 3.5 Haiku"},
+        ]
+        _models_cache.update({"fetched_at": now, "models": fallback, "error": str(e)})
+        return {"models": fallback, "source": "fallback", "warning": f"Failed to fetch from /v1/models: {e}"}
 
 
 @app.get("/health")
