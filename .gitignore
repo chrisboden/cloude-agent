@@ -36,3 +36,4 @@ peregian-hub-annual-report-2025.html
 tools/hub_tools.py
 
 CLAUDE.md
+.claude/settings.local.json

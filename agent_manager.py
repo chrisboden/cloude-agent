@@ -181,13 +181,33 @@ class AgentManager:
         # Default to acceptEdits (safer), can override to bypassPermissions via API
         permission_mode = context.get("permission_mode", "acceptEdits") if context else "acceptEdits"
 
-        # Webhook runs are non-interactive, so ensure we load project permissions rules explicitly.
-        # This avoids hanging on approval prompts when executing approved command helpers.
-        settings_path: Optional[str] = None
+        # Webhook runs are non-interactive; ensure required permission rules are present so we
+        # don't hang on approval prompts (e.g., command helpers like save_transcript.py).
+        settings: Optional[str] = None
         if (context or {}).get("source") == "webhook":
+            required_allows = [
+                "Bash(python3:*)",
+            ]
+
+            settings_obj: dict[str, Any] = {}
             candidate = WORKSPACE_DIR / ".claude" / "settings.json"
             if candidate.is_file():
-                settings_path = str(candidate)
+                try:
+                    settings_obj = json.loads(candidate.read_text(encoding="utf-8"))
+                except Exception:
+                    settings_obj = {}
+
+            permissions = settings_obj.get("permissions") if isinstance(settings_obj.get("permissions"), dict) else {}
+            allow_list = permissions.get("allow") if isinstance(permissions.get("allow"), list) else []
+            allow_list = list(allow_list)
+
+            for rule in required_allows:
+                if rule not in allow_list:
+                    allow_list.append(rule)
+
+            permissions["allow"] = allow_list
+            settings_obj["permissions"] = permissions
+            settings = json.dumps(settings_obj)
         
         # Set working directory to workspace for file operations and for discovering .claude/commands/ etc.
         options = ClaudeCodeOptions(
@@ -195,7 +215,7 @@ class AgentManager:
             cwd=str(WORKSPACE_DIR),
             model=(model or None),
             resume=resume_session_id,
-            settings=settings_path,
+            settings=settings,
         )
         
         # query() enables Claude Code preprocessing for slash commands and !` bash execution.
