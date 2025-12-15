@@ -24,6 +24,12 @@ if [ -d "$DEFAULT_COMMANDS_SRC" ] && [ -z "$(ls -A "$COMMANDS_DIR" 2>/dev/null |
     cp -n "$DEFAULT_COMMANDS_SRC"/*.md "$COMMANDS_DIR"/ 2>/dev/null || true
 fi
 
+# Also seed command helper scripts (non-destructive: only copies missing files).
+if [ -d "$DEFAULT_COMMANDS_SRC/scripts" ]; then
+    mkdir -p "$COMMANDS_DIR/scripts"
+    cp -R -n "$DEFAULT_COMMANDS_SRC/scripts/"* "$COMMANDS_DIR/scripts/" 2>/dev/null || true
+fi
+
 if [ -d "$DEFAULT_SKILLS_SRC" ] && [ -z "$(ls -A "$SKILLS_DIR" 2>/dev/null || true)" ]; then
     cp -R -n "$DEFAULT_SKILLS_SRC"/* "$SKILLS_DIR"/ 2>/dev/null || true
 fi
@@ -56,6 +62,5 @@ else
 
     exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}
 fi
-
 
 

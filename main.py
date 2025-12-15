@@ -188,7 +188,8 @@ async def webhook(
         command_template = agent_manager.get_command(command)
         if not command_template:
             raise HTTPException(status_code=404, detail=f"Command '{command}' not found")
-        # Format as slash command: /{command} {message}
+
+        # Format as slash command: /{command} {argument}
         actual_message = f"/{command} {actual_message}"
 
     result = await agent_manager.chat(
