@@ -1,6 +1,6 @@
 # Cloude ☁️ Agent
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/TEMPLATE_ID)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/CH2vqY?referralCode=P5pe6R&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 Deploy the Claude Code agent to the cloud. Give it a workspace to work with files. Load up skills and commands to extend its capabilities. Invoke via API or webhooks.
 
