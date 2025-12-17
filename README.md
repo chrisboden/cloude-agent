@@ -15,7 +15,13 @@ Click the deploy button above. You'll be prompted for two environment variables:
 
 ### 2. Open the Chat UI
 
-Open `chat.html` from this repo in your browser. It's a standalone file that connects to your deployed API — just double-click it or open it with your browser.
+Once deployed, open the chat interface in your browser:
+
+```
+https://your-app-name.up.railway.app/chat.html
+```
+
+Alternatively, you can open `chat.html` from this repo locally — it works as a standalone file too.
 
 ### 3. Configure Settings
 
@@ -25,6 +31,8 @@ Click the **Settings** button (gear icon) in the chat UI and enter:
 - **API Key** — The `API_KEY` you set during deployment
 
 The status indicator will show "Connected" when configured correctly.
+
+> **Tip:** Settings are saved in your browser's localStorage, so you only need to configure once per browser.
 
 ### 4. Start Chatting
 
@@ -92,6 +100,7 @@ Simply add your preferred skills and slash commands to the workspace and you hav
 - `POST /commands` — add/update a command template
 - `DELETE /commands/{id}` — delete a command
 - `GET /health` — health check
+- `GET /chat.html` — chat UI
 
 ## Auth
 - Set your ANTHROPIC_API_KEY in the Railway environment variables - this enables the Claude Agent to use the Anthropic LLM models.

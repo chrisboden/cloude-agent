@@ -6,7 +6,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response, StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 from agent_manager import AgentManager, WORKSPACE_DIR
@@ -726,6 +726,15 @@ async def get_session(session_id: str, raw: bool = False):
     return session
 
 
+@app.get("/chat.html")
+async def serve_chat_ui():
+    """Serve the chat UI."""
+    chat_html_path = Path(__file__).parent / "chat.html"
+    if not chat_html_path.exists():
+        raise HTTPException(status_code=404, detail="chat.html not found")
+    return FileResponse(chat_html_path, media_type="text/html")
+
+
 @app.get("/")
 async def root():
     """API information."""
@@ -752,6 +761,7 @@ async def root():
             "GET /skills/{id}": "Get skill content and file listing",
             "GET /skills/{id}/download": "Download skill as zip",
             "DELETE /skills/{id}": "Delete a skill",
-            "GET /health": "Health check"
+            "GET /health": "Health check",
+            "GET /chat.html": "Chat UI"
         }
     }
