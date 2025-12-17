@@ -4,29 +4,76 @@
 
 Deploy the Claude Code agent to the cloud. Give it a workspace to work with files. Load up skills and commands to extend its capabilities. Invoke via API or webhooks.
 
-One-click template deploy on Railway. Comes with a single-page chat app for interacting with the agent and managing files in the workspace.
+## Quick Start
+
+### 1. Deploy on Railway
+
+Click the deploy button above. You'll be prompted for two environment variables:
+
+- **`ANTHROPIC_API_KEY`** — Your Anthropic API key (get one at [console.anthropic.com](https://console.anthropic.com))
+- **`API_KEY`** — Create your own secret key for authenticating with your deployed app (e.g. a random string)
+
+### 2. Open the Chat UI
+
+Open `chat.html` from this repo in your browser. It's a standalone file that connects to your deployed API — just double-click it or open it with your browser.
+
+### 3. Configure Settings
+
+Click the **Settings** button (gear icon) in the chat UI and enter:
+
+- **API URL** — Your Railway app URL (e.g. `https://your-app-name.up.railway.app`)
+- **API Key** — The `API_KEY` you set during deployment
+
+The status indicator will show "Connected" when configured correctly.
+
+### 4. Start Chatting
+
+You're ready to go! The agent can read/write files in its workspace, run commands, and use any skills you've installed.
+
+---
+
+## Test with cURL
+
+Verify your deployment with these commands (replace the URL and API key):
+
+**Health check:**
+```bash
+curl https://your-app-name.up.railway.app/health
+```
+
+**Send a message:**
+```bash
+curl -X POST https://your-app-name.up.railway.app/chat \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "test", "message": "Hello! What can you do?"}'
+```
+
+**Streaming response:**
+```bash
+curl -X POST https://your-app-name.up.railway.app/chat/stream \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "test", "message": "Write a haiku about clouds"}'
+```
+
+---
 
 ## Background
 
-Claude Code is an amazing coding agent and, iykyk, it's actually a fantastic general purpose agent harness. With the Claude Agent SDK, we now have programmatic access. This little project helps deploy the SDK to the cloud and makes it available via API and webhook.
+Claude Code is an amazing coding agent and, iykyk, it's actually a fantastic general purpose agent harness. With the Claude Agent SDK, we now have programmatic access. This little project deploys the SDK to the cloud and makes it available via API and webhook.
 
 Simply add your preferred skills and slash commands to the workspace and you have a custom agent available 24x7 in the cloud.
 
-Deploy on Railway via a one click template deploy. Comes with a Claude.com style single-page chat UI for interacting with the agent and working with files in the workspace.
-
-## Requirements
-- Railway Account
-- Anthropic API Key
-
-
 ## Features
-- FastAPI-based API for interacting with the agent.
-- REDIS for session persistence.
-- Chat API with streaming (`/chat/stream`) via SSE and model selection.
-- File-aware agent: reads/writes in `/app/workspace` (Railway volume-backed).
-- Skill management: list/get/add/delete/upload/download skills.
-- Web chat UI (`chat.html`) for easy interaction with the agent and accessing the artifacts it generates.
-- Permissions modes: default is `acceptEdits`; toggle `bypassPermissions` in UI (skip dangerously).
+
+- **Chat API** with streaming (`/chat/stream`) via SSE and model selection
+- **Persistent workspace** — agent reads/writes files in `/app/workspace` (Railway volume-backed)
+- **Skill management** — list, add, delete, upload/download skills as zip files
+- **Slash commands** — define reusable prompt templates for consistent workflows
+- **Web chat UI** (`chat.html`) — Claude.com-style interface with file explorer
+- **Session persistence** — Redis-backed conversation history
+- **Webhook support** — trigger agent runs from external services
 
 ## API
 - `POST /chat` — non-streaming chat
@@ -86,7 +133,9 @@ Webhook-triggered runs can’t click “approve”, so **any tool that would nor
    - Docker: `docker run -d --name clawed-redis -p 6379:6379 redis:7`
 5) `export REDIS_URL="redis://localhost:6379"` (default, but explicit is clearer)
 6) `uvicorn main:app --reload`
-7) Open `chat.html` in a browser (set `API_URL` at top if needed).
+7) Open `chat.html` in a browser, click Settings, and configure:
+   - **API URL**: `http://127.0.0.1:8000`
+   - **API Key**: The key you exported in step 3
 
 ### Local Smoke Tests
 
