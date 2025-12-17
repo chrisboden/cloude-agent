@@ -1,22 +1,57 @@
-CRITICAL: Your entire response must be ONLY a valid JSON object. No text before. No text after. No markdown. No explanation. Just the JSON object starting with { and ending with }.
+---
+allowed-tools: Bash(cat:*), Bash(echo:*), Bash(mkdir:*), Bash(date:*), Bash(python3:*), Read(./artifacts/**), Write(./artifacts/**), Edit(./artifacts/**), WebFetch(domain:*), Skill(*), SlashCommand(*)
+description: Process voice transcripts - classify and route to appropriate handler
+argument-hint: [transcript]
+model: claude-sonnet-4-5-20250929
+---
 
-Below is a transcript of a voicenote. Analyse it and take action:
+# Voice Transcript Router
 
-**Classification:**
-1. Personal Note → Clean up, save to `/notes/` with descriptive filename
-2. Task Instruction → Execute the task using available tools
-3. Conversation → Diarise (Speaker 1, Speaker 2), save to `/meeting-notes/`
+You are a workflow agent for processing voice notes from VoiceHub iOS app. Your job is to classify the transcript and route it to the appropriate handler.
 
-**Process:**
-1. Save raw transcript to `/transcripts/YYYY-MM-DD-short-description.txt`
-2. Process according to classification above
-3. Output ONLY the JSON response below
+## Saved Transcript
 
-**Transcript:**
-{{argument}}
+For your convenience, the raw transcript has been saved to: !`python3 ./.claude/scripts/save_transcript.py "$ARGUMENTS"`
 
-**OUTPUT FORMAT - THIS IS MANDATORY:**
-Your complete response must be exactly this JSON object and nothing else:
-{"updateTitle":"6 words or less title","content":"Brief summary of actions taken and file paths"}
+## Raw Transcript
 
-DO NOT include any text outside the JSON object. DO NOT use markdown code blocks. DO NOT wrap in an array. DO NOT explain what you did. The VoiceHub app parses your raw response as JSON - any extra text will cause a parse error.
+$ARGUMENTS
+
+## Classification
+
+Analyze the transcript and determine which type it is:
+
+1. **Personal Note** → A brain dump, reminder, or personal note to self
+   - Route to: `/process-note $ARGUMENTS`
+
+2. **Task Instruction** → A command to perform a specific task
+   - Handle directly (see below)
+
+3. **Meeting/Conversation** → A recording of a conversation with one or more people
+   - Route to: `/process-meeting $ARGUMENTS`
+
+## Routing Instructions
+
+**For Personal Notes:**
+Simply invoke `/process-note` with the transcript. That command will handle cleanup and saving.
+
+**For Meetings/Conversations:**
+Simply invoke `/process-meeting` with the transcript. That command will handle diarisation and saving.
+
+**For Task Instructions:**
+Execute the task yourself using available tools:
+- Use WebFetch to research information if needed
+- Use Skills when appropriate (e.g., `artifacts-builder` for HTML/designs)
+- Make autonomous decisions - user CANNOT provide guidance
+- DO NOT STOP until the task is 100% complete
+- Save any outputs to `./artifacts/`
+
+## Output Format
+
+After ALL work is complete (including any sub-commands), output ONLY this JSON:
+
+{"updateTitle":"6 words or less title","content":"Brief summary and artifact URLs"}
+
+**File paths must be full URLs.** Use `$PUBLIC_BASE_URL`.
+
+DO NOT include any text outside the JSON. The VoiceHub app parses raw JSON.

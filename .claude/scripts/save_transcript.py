@@ -22,11 +22,10 @@ def main() -> int:
 
     path.write_text(transcript_text)
 
-    base_url = os.environ.get("PUBLIC_BASE_URL", "https://clawed-api-production.up.railway.app").rstrip("/")
+    base_url = os.environ.get("PUBLIC_BASE_URL").rstrip("/")
     print(f"{base_url}/artifacts/transcripts/{filename}")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
