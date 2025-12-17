@@ -1476,6 +1476,22 @@
             transition: background 0.15s;
         }
 
+        .artifacts-file[draggable="true"] {
+            cursor: grab;
+        }
+
+        .artifacts-file[draggable="true"]:active {
+            cursor: grabbing;
+        }
+
+        .artifacts-file[draggable="true"] .artifacts-file-name {
+            cursor: grab;
+        }
+
+        .artifacts-file.dragging {
+            opacity: 0.7;
+        }
+
         .artifacts-file:hover {
             background: var(--bg-secondary);
         }
@@ -1667,12 +1683,7 @@
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                        <path d="M2 17l10 5 10-5"/>
-                        <path d="M2 12l10 5 10-5"/>
-                    </svg>
-                    Clawed
+                    Cloude ☁️ Agent
                 </div>
             </div>
 
@@ -1854,19 +1865,20 @@ Instructions for Claude on how to use this skill..."></textarea>
         </div>
     </div>
 
-    <!-- Explorer Modal (Full-pane) - Skills, Artifacts, Commands & Sessions -->
-    <div class="artifacts-modal-overlay" id="artifactsModal">
-        <div class="artifacts-modal-header">
-            <div class="explorer-tabs">
-                <button class="explorer-tab" id="tabClaudeMd" onclick="switchExplorerTab('claude')">CLAUDE.md</button>
-                <button class="explorer-tab" id="tabSkills" onclick="switchExplorerTab('skills')">Skills</button>
-                <button class="explorer-tab active" id="tabArtifacts" onclick="switchExplorerTab('artifacts')">Artifacts</button>
-                <button class="explorer-tab" id="tabCommands" onclick="switchExplorerTab('commands')">Commands</button>
-                <button class="explorer-tab" id="tabSessions" onclick="switchExplorerTab('sessions')">Sessions</button>
-            </div>
-            <div style="display: flex; gap: 8px;">
-                <button class="artifacts-refresh-btn" id="explorerRefreshBtn" onclick="refreshCurrentTab()">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	    <!-- Explorer Modal (Full-pane) - Skills, Artifacts, Commands & Sessions -->
+	    <div class="artifacts-modal-overlay" id="artifactsModal">
+	        <div class="artifacts-modal-header">
+	            <div class="explorer-tabs">
+	                <button class="explorer-tab" id="tabClaudeMd" onclick="switchExplorerTab('claude')">CLAUDE.md</button>
+	                <button class="explorer-tab" id="tabSkills" onclick="switchExplorerTab('skills')">Skills</button>
+	                <button class="explorer-tab active" id="tabArtifacts" onclick="switchExplorerTab('artifacts')">Artifacts</button>
+	                <button class="explorer-tab" id="tabCommands" onclick="switchExplorerTab('commands')">Commands</button>
+	                <button class="explorer-tab" id="tabScripts" onclick="switchExplorerTab('scripts')">Scripts</button>
+	                <button class="explorer-tab" id="tabSessions" onclick="switchExplorerTab('sessions')">Sessions</button>
+	            </div>
+	            <div style="display: flex; gap: 8px;">
+	                <button class="artifacts-refresh-btn" id="explorerRefreshBtn" onclick="refreshCurrentTab()">
+	                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="23 4 23 10 17 10"></polyline>
                         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
                     </svg>
@@ -1934,24 +1946,39 @@ Instructions for Claude on how to use this skill..."></textarea>
                     <p>Claude can save files to /artifacts/ to share them publicly.<br>They'll appear here with clickable links.</p>
                 </div>
             </div>
-            <!-- Commands Tab Content -->
-            <div id="commandsContent" style="display: none;">
-                <div class="artifacts-empty">
-                    <div class="artifacts-empty-icon">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                            <polyline points="4 17 10 11 4 5"/>
+	            <!-- Commands Tab Content -->
+	            <div id="commandsContent" style="display: none;">
+	                <div class="artifacts-empty">
+	                    <div class="artifacts-empty-icon">
+	                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+	                            <polyline points="4 17 10 11 4 5"/>
                             <line x1="12" y1="19" x2="20" y2="19"/>
                         </svg>
                     </div>
-                    <h3>No commands yet</h3>
-                    <p>Slash commands will appear here.</p>
-                </div>
-            </div>
-            <!-- Sessions Tab Content -->
-            <div id="sessionsContent" style="display: none;">
-                <div class="artifacts-empty">
-                    <div class="artifacts-empty-icon">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+	                    <h3>No commands yet</h3>
+	                    <p>Slash commands will appear here.</p>
+	                </div>
+	            </div>
+	            <!-- Scripts Tab Content -->
+	            <div id="scriptsContent" style="display: none;">
+	                <div class="artifacts-empty">
+	                    <div class="artifacts-empty-icon">
+	                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+	                            <path d="M4 19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2z"></path>
+	                            <polyline points="14 2 14 8 20 8"></polyline>
+	                            <line x1="8" y1="13" x2="16" y2="13"></line>
+	                            <line x1="8" y1="17" x2="16" y2="17"></line>
+	                        </svg>
+	                    </div>
+	                    <h3>Scripts</h3>
+	                    <p>Helper scripts stored under <code>.claude/scripts/</code></p>
+	                </div>
+	            </div>
+	            <!-- Sessions Tab Content -->
+	            <div id="sessionsContent" style="display: none;">
+	                <div class="artifacts-empty">
+	                    <div class="artifacts-empty-icon">
+	                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                             <polyline points="14 2 14 8 20 8"/>
                             <line x1="16" y1="13" x2="8" y2="13"/>
@@ -2784,11 +2811,11 @@ Instructions for Claude on how to use this skill..."></textarea>
             return html;
         }
 
-        function renderArtifactFile(name, publicUrl, workspacePath) {
-            const encodedPath = encodeURIComponent(workspacePath || '');
-            const encodedTitle = encodeURIComponent(name || '');
-            const canEdit = isEditableTextFile(workspacePath || name);
-            const editBtn = canEdit ? `
+	        function renderArtifactFile(name, publicUrl, workspacePath) {
+	            const encodedPath = encodeURIComponent(workspacePath || '');
+	            const encodedTitle = encodeURIComponent(name || '');
+	            const canEdit = isEditableTextFile(workspacePath || name);
+	            const editBtn = canEdit ? `
                         <button class="artifacts-file-btn" onclick="editArtifactFile('${encodedPath}', '${encodedTitle}')" title="Edit">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -2797,18 +2824,18 @@ Instructions for Claude on how to use this skill..."></textarea>
                         </button>
             ` : '';
 
-            return `
-                <div class="artifacts-file">
-                    <div class="artifacts-file-icon">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                            <polyline points="14 2 14 8 20 8"/>
-                        </svg>
-                    </div>
-                    <div class="artifacts-file-info">
-                        <a href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener" class="artifacts-file-name">${escapeHtml(name)}</a>
-                        <div class="artifacts-file-url">${escapeHtml(publicUrl)}</div>
-                    </div>
+	            return `
+	                <div class="artifacts-file" draggable="true" data-workspace-path="${encodedPath}">
+	                    <div class="artifacts-file-icon">
+	                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+	                            <polyline points="14 2 14 8 20 8"/>
+	                        </svg>
+	                    </div>
+	                    <div class="artifacts-file-info">
+	                        <a href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener" class="artifacts-file-name">${escapeHtml(name)}</a>
+	                        <div class="artifacts-file-url">${escapeHtml(publicUrl)}</div>
+	                    </div>
                     <div class="artifacts-file-actions">
                         ${editBtn}
                         <button class="artifacts-file-btn delete" onclick="deleteArtifactFile('${encodedPath}')" title="Delete">
@@ -2884,12 +2911,12 @@ Instructions for Claude on how to use this skill..."></textarea>
             return idx >= 0 ? p.slice(0, idx) : '';
         }
 
-        async function moveWorkspaceItem(srcPath, dstPath, overwrite = false) {
-            const apiKey = document.getElementById('apiKey').value;
-            if (!apiKey) {
-                alert('Please enter your API key first');
-                return null;
-            }
+	        async function moveWorkspaceItem(srcPath, dstPath, overwrite = false) {
+	            const apiKey = document.getElementById('apiKey').value;
+	            if (!apiKey) {
+	                alert('Please enter your API key first');
+	                return null;
+	            }
 
             try {
                 const response = await fetch(`${API_URL}/workspace/move`, {
@@ -2902,17 +2929,22 @@ Instructions for Claude on how to use this skill..."></textarea>
                 });
 
                 let data = {};
-                try {
-                    data = await response.json();
-                } catch (e) {}
+	                try {
+	                    data = await response.json();
+	                } catch (e) {}
 
-                if (!response.ok) {
-                    const msg = data.detail || 'Unknown error';
-                    alert(`Move failed: ${msg}`);
-                    return null;
-                }
+	                if (!response.ok) {
+	                    if (response.status === 409 && !overwrite) {
+	                        const ok = confirm(`"${dstPath}" already exists.\n\nOverwrite it?`);
+	                        if (!ok) return null;
+	                        return await moveWorkspaceItem(srcPath, dstPath, true);
+	                    }
+	                    const msg = data.detail || 'Unknown error';
+	                    alert(`Move failed: ${msg}`);
+	                    return null;
+	                }
 
-                return data;
+	                return data;
             } catch (e) {
                 alert('Move failed: ' + e.message);
                 return null;
@@ -2931,6 +2963,7 @@ Instructions for Claude on how to use this skill..."></textarea>
         }
 
         let artifactsDropHandlingInstalled = false;
+        let artifactsInternalDragSrc = null;
 
         function artifactFolderIdFromPath(path) {
             return `folder-${String(path || '').replace(/[^a-zA-Z0-9]/g, '-')}`;
@@ -2944,6 +2977,7 @@ Instructions for Claude on how to use this skill..."></textarea>
 
             let activeHeader = null;
             const internalDragType = 'application/x-clawed-workspace-path';
+            const internalDragTextPrefix = 'clawed-workspace:';
 
             const clearDragState = () => {
                 if (activeHeader) activeHeader.classList.remove('drag-over');
@@ -2952,9 +2986,11 @@ Instructions for Claude on how to use this skill..."></textarea>
                 if (treeEl) treeEl.classList.remove('drag-over');
             };
 
-            contentEl.addEventListener('dragstart', (e) => {
+            const handleDragStart = (e) => {
                 if (currentExplorerTab !== 'artifacts') return;
-                const row = e.target.closest('.artifacts-file[draggable="true"]');
+                const target = e.target;
+                if (!(target instanceof Element)) return;
+                const row = target.closest('.artifacts-file[draggable="true"]');
                 if (!row || !contentEl.contains(row)) return;
                 const encoded = row.dataset.workspacePath || '';
                 if (!encoded) return;
@@ -2966,11 +3002,32 @@ Instructions for Claude on how to use this skill..."></textarea>
                 }
                 if (!srcPath || !srcPath.startsWith('artifacts/')) return;
 
+                artifactsInternalDragSrc = srcPath;
+                row.classList.add('dragging');
+
                 if (e.dataTransfer) {
-                    e.dataTransfer.setData(internalDragType, srcPath);
+                    try {
+                        e.dataTransfer.setData(internalDragType, srcPath);
+                    } catch (e) {}
+                    try {
+                        e.dataTransfer.setData('text/plain', `${internalDragTextPrefix}${srcPath}`);
+                    } catch (e) {}
                     e.dataTransfer.effectAllowed = 'move';
                 }
-            });
+            };
+
+            const handleDragEnd = (e) => {
+                const target = e.target;
+                if (!(target instanceof Element)) return;
+                const row = target.closest('.artifacts-file.dragging');
+                if (row) row.classList.remove('dragging');
+                artifactsInternalDragSrc = null;
+                clearDragState();
+            };
+
+            // Use capture so we reliably observe dragstart/dragend across browsers.
+            document.addEventListener('dragstart', handleDragStart, true);
+            document.addEventListener('dragend', handleDragEnd, true);
 
             contentEl.addEventListener('dragover', (e) => {
                 if (currentExplorerTab !== 'artifacts') return;
@@ -2979,7 +3036,8 @@ Instructions for Claude on how to use this skill..."></textarea>
 
                 if (e.dataTransfer) {
                     const types = Array.from(e.dataTransfer.types || []);
-                    e.dataTransfer.dropEffect = types.includes(internalDragType) ? 'move' : 'copy';
+                    const isInternal = !!artifactsInternalDragSrc || types.includes(internalDragType);
+                    e.dataTransfer.dropEffect = isInternal ? 'move' : 'copy';
                 }
 
                 const treeEl = contentEl.querySelector('.artifacts-tree');
@@ -3008,7 +3066,17 @@ Instructions for Claude on how to use this skill..."></textarea>
                 e.stopPropagation();
                 clearDragState();
 
-                const internalSrc = e.dataTransfer ? (e.dataTransfer.getData(internalDragType) || '') : '';
+                let internalSrc = e.dataTransfer ? (e.dataTransfer.getData(internalDragType) || '') : '';
+                if (!internalSrc && e.dataTransfer) {
+                    const text = e.dataTransfer.getData('text/plain') || '';
+                    if (text.startsWith(internalDragTextPrefix)) {
+                        internalSrc = text.slice(internalDragTextPrefix.length);
+                    }
+                }
+                if (!internalSrc && artifactsInternalDragSrc) {
+                    internalSrc = artifactsInternalDragSrc;
+                }
+                artifactsInternalDragSrc = null;
 
                 let header = e.target.closest('.artifacts-folder-header');
                 if (!header) {
@@ -3391,16 +3459,261 @@ Instructions for Claude on how to use this skill..."></textarea>
             }
         }
 
-        async function openCommandEditor(cmdId, encodedPath) {
-            const path = decodeURIComponent(encodedPath);
-            openTextEditor(path, `/${cmdId}`);
-        }
+	        async function openCommandEditor(cmdId, encodedPath) {
+	            const path = decodeURIComponent(encodedPath);
+	            openTextEditor(path, `/${cmdId}`);
+	        }
 
-        function handleTextEditorBack() {
-            disposeMonacoEditor();
-            if (typeof currentEditorOnBack === 'function') {
-                currentEditorOnBack();
-            }
+	        async function loadScripts() {
+	            const apiKey = document.getElementById('apiKey').value;
+	            if (!apiKey) {
+	                renderScriptsEmpty();
+	                return;
+	            }
+
+	            const contentEl = document.getElementById('scriptsContent');
+	            contentEl.innerHTML = '<div class="artifacts-empty"><p>Loading...</p></div>';
+
+	            const primaryBasePath = '.claude/scripts';
+	            const legacyBasePath = '.claude/commands/scripts';
+	            let basePath = primaryBasePath;
+	            let data = null;
+	            try {
+	                let response = await fetch(`${API_URL}/workspace?path=${encodeURIComponent(primaryBasePath)}`, {
+	                    headers: { 'X-API-Key': apiKey }
+	                });
+
+	                if (!response.ok) {
+	                    renderScriptsEmpty();
+	                    return;
+	                }
+
+	                data = await response.json();
+	                const primaryFiles = data.files || [];
+	                if (primaryFiles.length === 0) {
+	                    try {
+	                        response = await fetch(`${API_URL}/workspace?path=${encodeURIComponent(legacyBasePath)}`, {
+	                            headers: { 'X-API-Key': apiKey }
+	                        });
+	                        if (response.ok) {
+	                            const legacyData = await response.json();
+	                            const legacyFiles = legacyData.files || [];
+	                            if (legacyFiles.length > 0) {
+	                                basePath = legacyBasePath;
+	                                data = legacyData;
+	                            }
+	                        }
+	                    } catch (e) {}
+	                }
+
+	                renderScriptsList((data && data.files) ? data.files : [], basePath);
+	            } catch (e) {
+	                console.error('Failed to load scripts:', e);
+	                renderScriptsEmpty();
+	            }
+	        }
+
+	        function renderScriptsEmpty() {
+	            const contentEl = document.getElementById('scriptsContent');
+	            contentEl.innerHTML = `
+	                <div class="artifacts-empty">
+	                    <div class="artifacts-empty-icon">
+	                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+	                            <path d="M4 19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2z"></path>
+	                            <polyline points="14 2 14 8 20 8"></polyline>
+	                            <line x1="8" y1="13" x2="16" y2="13"></line>
+	                            <line x1="8" y1="17" x2="16" y2="17"></line>
+	                        </svg>
+	                    </div>
+	                    <h3>No scripts found</h3>
+	                    <p>Scripts live under <code>.claude/scripts/</code></p>
+	                    <button class="artifacts-refresh-btn" style="margin-top: 12px;" onclick="promptOpenWorkspaceFile()">Open file path</button>
+	                </div>
+	            `;
+	        }
+
+	        function shouldHideScriptsItem(name) {
+	            const n = String(name || '');
+	            return n === '__pycache__' || n === '.DS_Store' || n.endsWith('.pyc');
+	        }
+
+	        function renderScriptsList(files, basePath) {
+	            const contentEl = document.getElementById('scriptsContent');
+
+	            const visible = (files || []).filter(f => f && !shouldHideScriptsItem(f.name));
+	            let html = `
+	                <div class="skills-pane-header" style="margin-bottom: 12px;">
+	                    <div>
+	                        <div class="skills-pane-title">Scripts</div>
+	                        <div class="skills-pane-subtitle">Edit helper scripts stored under <code>${escapeHtml(basePath)}</code></div>
+	                    </div>
+	                    <div class="skills-pane-actions">
+	                        <button class="artifacts-refresh-btn" onclick="promptOpenWorkspaceFile()">Open file path</button>
+	                    </div>
+	                </div>
+	                <div class="artifacts-tree">
+	            `;
+
+	            if (visible.length === 0) {
+	                html += '<div style="padding: 12px; color: #888;">(empty)</div></div>';
+	                contentEl.innerHTML = html;
+	                return;
+	            }
+
+	            for (const file of visible) {
+	                const fullPath = `${basePath}/${file.name}`;
+	                if (file.is_dir) {
+	                    const folderId = `folder-${fullPath.replace(/[^a-zA-Z0-9]/g, '-')}`;
+	                    html += `
+	                        <div class="artifacts-folder">
+	                            <div class="artifacts-folder-header" onclick="toggleScriptsFolder('${escapeHtml(fullPath)}', '${folderId}')" style="cursor: pointer;">
+	                                <svg class="folder-chevron" id="chevron-${folderId}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transition: transform 0.2s;">
+	                                    <polyline points="9 18 15 12 9 6"></polyline>
+	                                </svg>
+	                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+	                                </svg>
+	                                <span class="artifacts-folder-name">${escapeHtml(file.name)}</span>
+	                            </div>
+	                            <div class="artifacts-folder-contents" id="${folderId}" style="display: none;"></div>
+	                        </div>
+	                    `;
+	                } else {
+	                    html += renderScriptFileRow(file.name, fullPath);
+	                }
+	            }
+
+	            html += '</div>';
+	            contentEl.innerHTML = html;
+	        }
+
+	        function renderScriptsFolderContents(files, basePath) {
+	            const visible = (files || []).filter(f => f && !shouldHideScriptsItem(f.name));
+	            if (visible.length === 0) {
+	                return '<div style="padding: 8px 0 8px 20px; color: #888;">(empty)</div>';
+	            }
+
+	            let html = '';
+	            for (const file of visible) {
+	                const fullPath = `${basePath}/${file.name}`;
+	                if (file.is_dir) {
+	                    const folderId = `folder-${fullPath.replace(/[^a-zA-Z0-9]/g, '-')}`;
+	                    html += `
+	                        <div class="artifacts-folder" style="margin-left: 20px;">
+	                            <div class="artifacts-folder-header" onclick="toggleScriptsFolder('${escapeHtml(fullPath)}', '${folderId}')" style="cursor: pointer;">
+	                                <svg class="folder-chevron" id="chevron-${folderId}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transition: transform 0.2s;">
+	                                    <polyline points="9 18 15 12 9 6"></polyline>
+	                                </svg>
+	                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+	                                </svg>
+	                                <span class="artifacts-folder-name">${escapeHtml(file.name)}</span>
+	                            </div>
+	                            <div class="artifacts-folder-contents" id="${folderId}" style="display: none;"></div>
+	                        </div>
+	                    `;
+	                } else {
+	                    html += `<div style="margin-left: 20px;">${renderScriptFileRow(file.name, fullPath)}</div>`;
+	                }
+	            }
+	            return html;
+	        }
+
+	        function renderScriptFileRow(name, workspacePath) {
+	            const encodedPath = encodeURIComponent(workspacePath || '');
+	            const encodedTitle = encodeURIComponent(name || '');
+	            const canEdit = isEditableTextFile(workspacePath || name);
+	            const editBtn = canEdit ? `
+	                        <button class="artifacts-file-btn" onclick="editScriptWorkspaceFile('${encodedPath}', '${encodedTitle}')" title="Edit">
+	                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+	                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+	                            </svg>
+	                        </button>
+	            ` : '';
+
+	            return `
+	                <div class="artifacts-file">
+	                    <div class="artifacts-file-icon">
+	                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+	                            <polyline points="14 2 14 8 20 8"/>
+	                        </svg>
+	                    </div>
+	                    <div class="artifacts-file-info">
+	                        <span class="artifacts-file-name">${escapeHtml(name)}</span>
+	                        <div class="artifacts-file-url">${escapeHtml(workspacePath)}</div>
+	                    </div>
+	                    <div class="artifacts-file-actions">
+	                        ${editBtn}
+	                        <button class="artifacts-file-btn delete" onclick="deleteScriptWorkspaceFile('${encodedPath}')" title="Delete">
+	                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                                <polyline points="3 6 5 6 21 6"></polyline>
+	                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+	                            </svg>
+	                        </button>
+	                    </div>
+	                </div>
+	            `;
+	        }
+
+	        async function toggleScriptsFolder(path, folderId) {
+	            const contentsEl = document.getElementById(folderId);
+	            const chevronEl = document.getElementById(`chevron-${folderId}`);
+	            if (!contentsEl || !chevronEl) return;
+
+	            if (contentsEl.style.display === 'none') {
+	                contentsEl.style.display = 'block';
+	                chevronEl.style.transform = 'rotate(90deg)';
+
+	                if (contentsEl.innerHTML === '') {
+	                    contentsEl.innerHTML = '<div style="padding: 8px 0 8px 20px; color: #888;">Loading...</div>';
+	                    const apiKey = document.getElementById('apiKey').value;
+	                    try {
+	                        const response = await fetch(`${API_URL}/workspace?path=${encodeURIComponent(path)}`, {
+	                            headers: { 'X-API-Key': apiKey }
+	                        });
+	                        if (response.ok) {
+	                            const data = await response.json();
+	                            const files = data.files || [];
+	                            contentsEl.innerHTML = renderScriptsFolderContents(files, path);
+	                        } else {
+	                            contentsEl.innerHTML = '<div style="padding: 8px 0 8px 20px; color: #f66;">Failed to load</div>';
+	                        }
+	                    } catch (e) {
+	                        contentsEl.innerHTML = '<div style="padding: 8px 0 8px 20px; color: #f66;">Failed to load</div>';
+	                    }
+	                }
+	            } else {
+	                contentsEl.style.display = 'none';
+	                chevronEl.style.transform = 'rotate(0deg)';
+	            }
+	        }
+
+	        async function editScriptWorkspaceFile(encodedPath, encodedTitle) {
+	            const path = decodeURIComponent(encodedPath || '');
+	            const title = decodeURIComponent(encodedTitle || '') || path;
+	            if (!isEditableTextFile(path)) {
+	                alert('This file type is not editable in the browser.');
+	                return;
+	            }
+	            await openTextEditor(path, title, { containerId: 'scriptsContent', onBack: loadScripts });
+	        }
+
+	        async function deleteScriptWorkspaceFile(encodedPath) {
+	            const path = decodeURIComponent(encodedPath || '');
+	            if (!path) return;
+	            if (!confirm(`Delete "${path}"?`)) return;
+	            const ok = await deleteWorkspaceItem(path);
+	            if (!ok) return;
+	            await loadScripts();
+	        }
+
+	        function handleTextEditorBack() {
+	            disposeMonacoEditor();
+	            if (typeof currentEditorOnBack === 'function') {
+	                currentEditorOnBack();
+	            }
         }
 
         function isRenameAllowedForPath(path) {
@@ -3709,60 +4022,66 @@ Instructions for Claude on how to use this skill..."></textarea>
         let currentExplorerTab = 'artifacts';
         let currentViewingSession = null;
 
-        function switchExplorerTab(tab) {
-            currentExplorerTab = tab;
-            currentViewingSession = null;
+	        function switchExplorerTab(tab) {
+	            currentExplorerTab = tab;
+	            currentViewingSession = null;
 
-            // Update tab buttons
-            document.getElementById('tabClaudeMd').classList.toggle('active', tab === 'claude');
-            document.getElementById('tabSkills').classList.toggle('active', tab === 'skills');
-            document.getElementById('tabArtifacts').classList.toggle('active', tab === 'artifacts');
-            document.getElementById('tabCommands').classList.toggle('active', tab === 'commands');
-            document.getElementById('tabSessions').classList.toggle('active', tab === 'sessions');
+	            // Update tab buttons
+	            document.getElementById('tabClaudeMd').classList.toggle('active', tab === 'claude');
+	            document.getElementById('tabSkills').classList.toggle('active', tab === 'skills');
+	            document.getElementById('tabArtifacts').classList.toggle('active', tab === 'artifacts');
+	            document.getElementById('tabCommands').classList.toggle('active', tab === 'commands');
+	            document.getElementById('tabScripts').classList.toggle('active', tab === 'scripts');
+	            document.getElementById('tabSessions').classList.toggle('active', tab === 'sessions');
 
-            // Show/hide content
-            document.getElementById('claudeContent').style.display = tab === 'claude' ? 'block' : 'none';
-            document.getElementById('skillsContent').style.display = tab === 'skills' ? 'block' : 'none';
-            document.getElementById('artifactsContent').style.display = tab === 'artifacts' ? 'block' : 'none';
-            document.getElementById('commandsContent').style.display = tab === 'commands' ? 'block' : 'none';
-            document.getElementById('sessionsContent').style.display = tab === 'sessions' ? 'block' : 'none';
+	            // Show/hide content
+	            document.getElementById('claudeContent').style.display = tab === 'claude' ? 'block' : 'none';
+	            document.getElementById('skillsContent').style.display = tab === 'skills' ? 'block' : 'none';
+	            document.getElementById('artifactsContent').style.display = tab === 'artifacts' ? 'block' : 'none';
+	            document.getElementById('commandsContent').style.display = tab === 'commands' ? 'block' : 'none';
+	            document.getElementById('scriptsContent').style.display = tab === 'scripts' ? 'block' : 'none';
+	            document.getElementById('sessionsContent').style.display = tab === 'sessions' ? 'block' : 'none';
 
-            // Load content
-            if (tab === 'claude') {
-                loadClaudeMd();
-            } else if (tab === 'skills') {
-                if (currentSkillExplorer && currentSkillExplorer.id) {
-                    loadSkillExplorer();
-                } else {
-                    loadSkills();
-                }
-            } else if (tab === 'artifacts') {
-                loadArtifacts();
-            } else if (tab === 'commands') {
-                loadCommands();
-            } else {
-                loadSessions();
-            }
-        }
+	            // Load content
+	            if (tab === 'claude') {
+	                loadClaudeMd();
+	            } else if (tab === 'skills') {
+	                if (currentSkillExplorer && currentSkillExplorer.id) {
+	                    loadSkillExplorer();
+	                } else {
+	                    loadSkills();
+	                }
+	            } else if (tab === 'artifacts') {
+	                loadArtifacts();
+	            } else if (tab === 'commands') {
+	                loadCommands();
+	            } else if (tab === 'scripts') {
+	                loadScripts();
+	            } else {
+	                loadSessions();
+	            }
+	        }
 
-        function refreshCurrentTab() {
-            if (currentExplorerTab === 'claude') {
-                loadClaudeMd();
-            } else if (currentExplorerTab === 'skills') {
-                if (currentSkillExplorer && currentSkillExplorer.id) {
-                    loadSkillExplorer();
-                } else {
-                    loadSkills();
-                }
-            } else if (currentExplorerTab === 'artifacts') {
-                loadArtifacts();
-            } else if (currentExplorerTab === 'commands') {
-                loadCommands();
-            } else {
-                if (currentViewingSession) {
-                    loadSessionDetail(currentViewingSession);
-                } else {
-                    loadSessions();
+	        function refreshCurrentTab() {
+	            if (currentExplorerTab === 'claude') {
+	                loadClaudeMd();
+	            } else if (currentExplorerTab === 'skills') {
+	                if (currentSkillExplorer && currentSkillExplorer.id) {
+	                    loadSkillExplorer();
+	                } else {
+	                    loadSkills();
+	                }
+	            } else if (currentExplorerTab === 'artifacts') {
+	                loadArtifacts();
+	            } else if (currentExplorerTab === 'commands') {
+	                loadCommands();
+	            } else if (currentExplorerTab === 'scripts') {
+	                loadScripts();
+	            } else {
+	                if (currentViewingSession) {
+	                    loadSessionDetail(currentViewingSession);
+	                } else {
+	                    loadSessions();
                 }
             }
         }
