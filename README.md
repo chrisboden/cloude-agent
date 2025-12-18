@@ -94,23 +94,48 @@ Simply add your preferred skills and slash commands to the workspace and you hav
 - **Webhook support** — trigger agent runs from external services
 
 ## API
-- `POST /chat` — non-streaming chat
-- `POST /chat/stream` — SSE streaming chat
+
+### Chat
+- `POST /chat` — non-streaming chat (requires `X-API-Key` header)
+- `POST /chat/stream` — SSE streaming chat (requires `X-API-Key` header)
+- `POST /webhook` — webhook endpoint with flexible field mapping (supports `X-API-Key` header OR `api_key` query param)
+
+### Models
+- `GET /models` — list available Claude models
+
+### Workspace
 - `GET /workspace` — list workspace files
-- `GET /workspace/{path}` — download workspace file (requires `X-API-Key`)
+- `GET /workspace/{path}` — download workspace file
+- `PUT /workspace/{path}` — create/update a text file
 - `DELETE /workspace/{path}` — delete workspace file
+- `POST /workspace/move` — move/rename a file or directory
+
+### Skills
 - `GET /skills` — list skills
 - `GET /skills/{id}` — get SKILL.md + files
 - `POST /skills` — add/update a SKILL.md
 - `POST /skills/upload` — upload skill zip
 - `GET /skills/{id}/download` — download skill zip
 - `DELETE /skills/{id}` — delete skill
+
+### Commands
 - `GET /commands` — list commands
 - `GET /commands/{id}` — get command template
 - `POST /commands` — add/update a command template
 - `DELETE /commands/{id}` — delete a command
+
+### Sessions
+- `GET /sessions` — list all sessions (newest first)
+- `GET /sessions/{id}` — get session content (add `?raw=true` for raw JSONL)
+
+### Artifacts (Public)
+- `GET /artifacts/{path}` — public file access (**no auth required**, no directory listing)
+- `POST /artifacts/upload` — upload files to artifacts directory
+
+### System
 - `GET /health` — health check
 - `GET /chat.html` — chat UI
+- `GET /` — API info and endpoint list
 
 ## Auth
 - Set your ANTHROPIC_API_KEY in the Railway environment variables - this enables the Claude Agent to use the Anthropic LLM models.
@@ -135,11 +160,27 @@ Simply add your preferred skills and slash commands to the workspace and you hav
 - Manage via API: `GET/POST/DELETE /commands` (and/or edit the files on the volume).
 - Useful for webhooks that need consistent prompt formatting and reliable routing.
 
-## Webhooks (non-interactive permissions)
-Webhook-triggered runs can’t click “approve”, so **any tool that would normally prompt must be pre-approved** or you’ll see errors like “This command requires approval”.
+## Webhooks
 
-- Use `POST /webhook` to map arbitrary payloads into a session + message, optionally invoking a slash command:
-  - Example: `POST <app's railway url>/webhook?api_key=...&command=voice-transcript&session_id=id&message=transcript&raw_response=true`
+The `/webhook` endpoint accepts arbitrary JSON payloads and maps them to chat requests. Useful for integrating with external services (transcription services, form submissions, etc.).
+
+**Query parameters:**
+- `api_key` — API key (alternative to `X-API-Key` header)
+- `command` — slash command to invoke (e.g., `voice-transcript`)
+- `session_id` — field name in body to use as session ID (default: looks for `session_id`, `id`)
+- `message` — field name in body to use as message (default: looks for `message`, `transcript`, `text`)
+- `raw_response` — if `true`, returns Claude's response directly without wrapper
+
+**Example:**
+```bash
+# Webhook with slash command
+curl -X POST "https://your-app.up.railway.app/webhook?api_key=YOUR_KEY&command=voice-transcript" \
+  -H "Content-Type: application/json" \
+  -d '{"id": "session-123", "transcript": "Hello, this is a voice transcript..."}'
+```
+
+**Permissions:** Webhook-triggered runs can't click "approve", so **any tool that would normally prompt must be pre-approved** or you'll see errors like "This command requires approval".
+
 - Recommended: keep permissions locked down and add explicit allow rules in `.claude/settings.json` (seeded into the volume by `entrypoint.sh`).
 - Avoid relying on `bypassPermissions` for production webhooks unless you fully trust the deployment and isolation.
 
