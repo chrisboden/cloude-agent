@@ -25,7 +25,8 @@ DEFAULT_SKILLS_SRC="/app/.claude/skills"
 DEFAULT_SETTINGS_SRC="/app/.claude/settings.json"
 DEFAULT_CLAUDE_MD_SRC="/app/.claude/CLAUDE.md"
 
-if [ -d "$DEFAULT_COMMANDS_SRC" ] && [ -z "$(ls -A "$COMMANDS_DIR" 2>/dev/null || true)" ]; then
+# Always copy new command files (but don't overwrite existing ones with -n)
+if [ -d "$DEFAULT_COMMANDS_SRC" ]; then
     cp -n "$DEFAULT_COMMANDS_SRC"/*.md "$COMMANDS_DIR"/ 2>/dev/null || true
 fi
 

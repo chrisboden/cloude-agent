@@ -1426,6 +1426,14 @@
             border-radius: 10px;
         }
 
+        #commandsContent.drag-over,
+        #scriptsContent.drag-over {
+            outline: 2px dashed rgba(217, 119, 87, 0.6);
+            outline-offset: -2px;
+            border-radius: 10px;
+            background: rgba(217, 119, 87, 0.05);
+        }
+
         .artifacts-folder {
             margin-bottom: 8px;
         }
@@ -2024,6 +2032,8 @@ Instructions for Claude on how to use this skill..."></textarea>
             loadSkills();
             setupEventListeners();
             autoResizeTextarea();
+            setupCommandsDragDrop();
+            setupScriptsDragDrop();
         });
 
         function installSkillsDropZoneListeners() {
@@ -3229,6 +3239,145 @@ Instructions for Claude on how to use this skill..."></textarea>
                 contentsEl.innerHTML = renderArtifactFolderContents(files, normalized);
             } catch (e) {
             }
+        }
+
+        // Upload files to a workspace directory (for commands/scripts)
+        async function uploadWorkspaceFiles(fileList, targetDir) {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) {
+                alert('Please enter your API key first');
+                return;
+            }
+
+            const files = Array.from(fileList || []).filter(f => f && f.name);
+            if (files.length === 0) return;
+
+            let successCount = 0;
+            let errors = [];
+
+            for (const file of files) {
+                const safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, '-');
+                const filePath = `${targetDir}/${safeName}`;
+
+                try {
+                    const content = await file.text();
+                    const response = await fetch(`${API_URL}/workspace/${encodeURIComponent(filePath)}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-API-Key': apiKey
+                        },
+                        body: JSON.stringify({ content })
+                    });
+
+                    if (!response.ok) {
+                        const data = await response.json().catch(() => ({}));
+                        errors.push(`${file.name}: ${data.detail || 'Unknown error'}`);
+                    } else {
+                        successCount++;
+                    }
+                } catch (e) {
+                    errors.push(`${file.name}: ${e.message}`);
+                }
+            }
+
+            if (errors.length > 0) {
+                alert(`Upload completed with errors:\n${errors.join('\n')}`);
+            }
+
+            return successCount > 0;
+        }
+
+        // Setup drag-drop for commands tab
+        function setupCommandsDragDrop() {
+            const contentEl = document.getElementById('commandsContent');
+            if (!contentEl) return;
+
+            contentEl.addEventListener('dragover', (e) => {
+                if (currentExplorerTab !== 'commands') return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.dataTransfer) {
+                    e.dataTransfer.dropEffect = 'copy';
+                }
+                contentEl.classList.add('drag-over');
+            });
+
+            contentEl.addEventListener('dragleave', (e) => {
+                if (currentExplorerTab !== 'commands') return;
+                if (!e.relatedTarget || !contentEl.contains(e.relatedTarget)) {
+                    contentEl.classList.remove('drag-over');
+                }
+            });
+
+            contentEl.addEventListener('drop', async (e) => {
+                if (currentExplorerTab !== 'commands') return;
+                e.preventDefault();
+                e.stopPropagation();
+                contentEl.classList.remove('drag-over');
+
+                const files = e.dataTransfer?.files;
+                if (!files || files.length === 0) return;
+
+                // Filter to only .md files for commands
+                const mdFiles = Array.from(files).filter(f => f.name.endsWith('.md'));
+                if (mdFiles.length === 0) {
+                    alert('Please drop .md files for slash commands');
+                    return;
+                }
+
+                const uploaded = await uploadWorkspaceFiles(mdFiles, '.claude/commands');
+                if (uploaded) {
+                    await loadCommands();
+                }
+            });
+        }
+
+        // Setup drag-drop for scripts tab
+        function setupScriptsDragDrop() {
+            const contentEl = document.getElementById('scriptsContent');
+            if (!contentEl) return;
+
+            contentEl.addEventListener('dragover', (e) => {
+                if (currentExplorerTab !== 'scripts') return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.dataTransfer) {
+                    e.dataTransfer.dropEffect = 'copy';
+                }
+                contentEl.classList.add('drag-over');
+            });
+
+            contentEl.addEventListener('dragleave', (e) => {
+                if (currentExplorerTab !== 'scripts') return;
+                if (!e.relatedTarget || !contentEl.contains(e.relatedTarget)) {
+                    contentEl.classList.remove('drag-over');
+                }
+            });
+
+            contentEl.addEventListener('drop', async (e) => {
+                if (currentExplorerTab !== 'scripts') return;
+                e.preventDefault();
+                e.stopPropagation();
+                contentEl.classList.remove('drag-over');
+
+                const files = e.dataTransfer?.files;
+                if (!files || files.length === 0) return;
+
+                // Filter to script files (.sh, .py)
+                const scriptFiles = Array.from(files).filter(f =>
+                    f.name.endsWith('.sh') || f.name.endsWith('.py')
+                );
+                if (scriptFiles.length === 0) {
+                    alert('Please drop .sh or .py files for scripts');
+                    return;
+                }
+
+                const uploaded = await uploadWorkspaceFiles(scriptFiles, '.claude/scripts');
+                if (uploaded) {
+                    await loadScripts();
+                }
+            });
         }
 
         // Text editor (Monaco, with textarea fallback)
@@ -4540,6 +4689,18 @@ Instructions for Claude on how to use this skill..."></textarea>
             handleFiles(event.target.files);
         }
 
+        function isTextFile(filename) {
+            const textExtensions = [
+                '.md', '.txt', '.json', '.js', '.ts', '.jsx', '.tsx', '.py', '.sh',
+                '.html', '.css', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg',
+                '.csv', '.sql', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h',
+                '.swift', '.kt', '.php', '.pl', '.r', '.lua', '.vim', '.conf',
+                '.env', '.gitignore', '.dockerfile', '.log'
+            ];
+            const lower = filename.toLowerCase();
+            return textExtensions.some(ext => lower.endsWith(ext));
+        }
+
         function handleFiles(fileList) {
             for (const file of fileList) {
                 if (attachedFiles.length >= 5) {
@@ -4548,16 +4709,25 @@ Instructions for Claude on how to use this skill..."></textarea>
                 }
 
                 const reader = new FileReader();
+                const isText = isTextFile(file.name);
+
                 reader.onload = (e) => {
                     attachedFiles.push({
                         name: file.name,
                         type: file.type,
-                        content: e.target.result
+                        content: e.target.result,
+                        isText: isText
                     });
                     renderAttachedFiles();
                     updateSendButton();
                 };
-                reader.readAsDataURL(file);
+
+                // Read text files as text, images as dataURL
+                if (isText) {
+                    reader.readAsText(file);
+                } else {
+                    reader.readAsDataURL(file);
+                }
             }
         }
 
@@ -4604,11 +4774,20 @@ Instructions for Claude on how to use this skill..."></textarea>
 
             // Separate images from other files
             const imageFiles = attachedFiles.filter(f => f.type.startsWith('image/'));
-            const otherFiles = attachedFiles.filter(f => !f.type.startsWith('image/'));
+            const textFiles = attachedFiles.filter(f => f.isText);
+            const otherFiles = attachedFiles.filter(f => !f.type.startsWith('image/') && !f.isText);
 
-            // Append non-image file info to message
+            // Append text file contents to message
+            if (textFiles.length > 0) {
+                const fileContents = textFiles.map(f => {
+                    return `--- ${f.name} ---\n${f.content}\n--- end ${f.name} ---`;
+                }).join('\n\n');
+                message = message ? `${message}\n\n${fileContents}` : fileContents;
+            }
+
+            // Append non-text, non-image file info to message (binary files)
             if (otherFiles.length > 0) {
-                const fileDescriptions = otherFiles.map(f => `[Attached file: ${f.name}]`).join('\n');
+                const fileDescriptions = otherFiles.map(f => `[Attached binary file: ${f.name} - cannot display contents]`).join('\n');
                 message = message ? `${message}\n\n${fileDescriptions}` : fileDescriptions;
             }
 
