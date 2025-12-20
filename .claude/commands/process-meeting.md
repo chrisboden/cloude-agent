@@ -2,7 +2,6 @@
 allowed-tools: Bash(mkdir:*), Bash(date:*), Write(./artifacts/**), Edit(./artifacts/**)
 description: Diarise and summarise a meeting or conversation transcript
 argument-hint: [raw transcript]
-model: claude-sonnet-4-5-20250929
 ---
 
 # Process Meeting/Conversation

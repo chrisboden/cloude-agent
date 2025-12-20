@@ -210,6 +210,151 @@
             font-weight: 500;
         }
 
+        .model-summary {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .model-current {
+            font-size: 13px;
+            color: var(--text-primary);
+            font-weight: 500;
+            flex: 1;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .model-change-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 12px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+
+        .model-change-btn:hover {
+            color: var(--text-primary);
+            border-color: var(--accent);
+        }
+
+        .model-picker {
+            position: relative;
+        }
+
+        .model-search-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .model-search-input {
+            flex: 1;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: inherit;
+        }
+
+        .model-search-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .model-reset-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 12px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+
+        .model-reset-btn:hover {
+            color: var(--text-primary);
+            border-color: var(--accent);
+        }
+
+        .model-default-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 6px;
+            line-height: 1.4;
+        }
+
+        .model-dropdown {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            max-height: 320px;
+            overflow-y: auto;
+            z-index: 50;
+            display: none;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+        }
+
+        .model-dropdown.open {
+            display: block;
+        }
+
+        .model-option {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .model-option:last-child {
+            border-bottom: none;
+        }
+
+        .model-option:hover {
+            background: var(--bg-hover);
+        }
+
+        .model-option.selected {
+            background: rgba(217, 119, 87, 0.12);
+            border-left: 2px solid var(--accent);
+            padding-left: 10px;
+        }
+
+        .model-option-name {
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+
+        .model-option-id {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            word-break: break-all;
+        }
+
+        .model-option-empty {
+            padding: 10px 12px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
         /* Skills section */
         .skills-section {
             padding: 12px 16px;
@@ -1697,11 +1842,11 @@
 
             <div class="model-section">
                 <label>Model</label>
-                <select class="model-select" id="modelSelect">
-                    <option value="">Default</option>
-                    <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5</option>
-                    <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
-                </select>
+                <div class="model-summary">
+                    <div class="model-current" id="modelCurrentLabel">Default</div>
+                    <button class="model-change-btn" type="button" onclick="openSettingsModal()">Change</button>
+                </div>
+                <div class="model-default-hint" id="modelDefaultHint">Server default: Unknown</div>
             </div>
 
             <div class="model-section">
@@ -1878,6 +2023,20 @@ Instructions for Claude on how to use this skill..."></textarea>
                         <span class="status-dot"></span>
                         <span id="statusText">Not connected</span>
                     </div>
+                </div>
+                <div class="settings-section">
+                    <div class="settings-section-header">
+                        <h3>Default Model</h3>
+                    </div>
+                    <div class="model-picker" id="modelPicker">
+                        <div class="model-search-row">
+                            <input type="text" class="model-search-input" id="modelSearchInput" placeholder="Search models...">
+                            <button class="model-reset-btn" type="button" id="modelResetBtn">Use server default</button>
+                        </div>
+                        <div class="model-default-hint" id="modelPickerHint">Server default: Unknown</div>
+                        <div class="model-dropdown" id="modelDropdown"></div>
+                    </div>
+                    <div class="model-default-hint" id="modelSelectionHint">Current: Default</div>
                 </div>
             </div>
         </div>
@@ -2098,8 +2257,7 @@ Instructions for Claude on how to use this skill..."></textarea>
             });
 
             // Model selection
-            const modelSelect = document.getElementById('modelSelect');
-            modelSelect.addEventListener('change', saveModel);
+            setupModelPicker();
 
             // Drag and drop for chat files
             dropZone.addEventListener('dragover', (e) => {
@@ -2190,10 +2348,218 @@ Instructions for Claude on how to use this skill..."></textarea>
 
         // Model management
         let modelDisplayNames = {};
+        let modelsCache = [];
+        let selectedModelId = '';
+        let defaultModelId = '';
+        let defaultModelAlias = 'sonnet';
+        const MODEL_DROPDOWN_LIMIT = 200;
+        const MODEL_DROPDOWN_IDLE_LIMIT = 50;
+
+        function getModelDisplayName(modelId) {
+            if (!modelId) return '';
+            return modelDisplayNames[modelId] || modelId;
+        }
+
+        function getDefaultModelHint() {
+            if (defaultModelId) {
+                const display = getModelDisplayName(defaultModelId);
+                const aliasLabel = defaultModelAlias ? ` (${defaultModelAlias})` : '';
+                return `Server default${aliasLabel}: ${display}`;
+            }
+            if (defaultModelAlias) {
+                return `Server default (${defaultModelAlias})`;
+            }
+            return 'Server default';
+        }
+
+        function getModelBadgeLabel(modelId) {
+            if (modelId) {
+                return getModelDisplayName(modelId);
+            }
+            if (defaultModelId) {
+                return `Default: ${getModelDisplayName(defaultModelId)}`;
+            }
+            if (defaultModelAlias) {
+                return `Default (${defaultModelAlias})`;
+            }
+            return '';
+        }
+
+        function updateModelSelectionUI() {
+            const currentLabel = document.getElementById('modelCurrentLabel');
+            const defaultHint = document.getElementById('modelDefaultHint');
+            const pickerHint = document.getElementById('modelPickerHint');
+            const selectionHint = document.getElementById('modelSelectionHint');
+
+            const currentText = selectedModelId
+                ? getModelDisplayName(selectedModelId)
+                : (defaultModelId ? `Default: ${getModelDisplayName(defaultModelId)}` : 'Default');
+            if (currentLabel) {
+                currentLabel.textContent = currentText;
+            }
+
+            const defaultHintText = getDefaultModelHint();
+            if (defaultHint) {
+                defaultHint.textContent = defaultHintText;
+            }
+            if (pickerHint) {
+                pickerHint.textContent = defaultHintText;
+            }
+            if (selectionHint) {
+                selectionHint.textContent = selectedModelId
+                    ? `Current: ${getModelDisplayName(selectedModelId)}`
+                    : 'Current: Server default';
+            }
+        }
+
+        function loadModel() {
+            selectedModelId = localStorage.getItem('clawed_model') || '';
+            updateModelSelectionUI();
+        }
+
+        function setSelectedModel(modelId) {
+            selectedModelId = modelId || '';
+            if (selectedModelId) {
+                localStorage.setItem('clawed_model', selectedModelId);
+            } else {
+                localStorage.removeItem('clawed_model');
+            }
+            updateModelSelectionUI();
+        }
+
+        function getSelectedModel() {
+            return selectedModelId;
+        }
+
+        function filterModels(term) {
+            const normalized = (term || '').trim().toLowerCase();
+            if (!normalized) {
+                return modelsCache.slice(0, MODEL_DROPDOWN_IDLE_LIMIT);
+            }
+            return modelsCache.filter((m) => {
+                const id = String(m.id || '').toLowerCase();
+                const name = String(m.display_name || '').toLowerCase();
+                return id.includes(normalized) || name.includes(normalized);
+            }).slice(0, MODEL_DROPDOWN_LIMIT);
+        }
+
+        function renderModelDropdown(term) {
+            const dropdown = document.getElementById('modelDropdown');
+            if (!dropdown) return;
+            const matches = filterModels(term);
+            const normalized = (term || '').trim().toLowerCase();
+
+            const options = [];
+            const defaultSelected = !selectedModelId;
+            options.push(`
+                <div class="model-option ${defaultSelected ? 'selected' : ''}" data-model-id="">
+                    <div class="model-option-name">Default</div>
+                    <div class="model-option-id">${escapeHtml(getDefaultModelHint())}</div>
+                </div>
+            `);
+
+            if (!normalized && modelsCache.length > MODEL_DROPDOWN_IDLE_LIMIT) {
+                options.push(`<div class="model-option-empty">Type to filter (${MODEL_DROPDOWN_IDLE_LIMIT} of ${modelsCache.length} shown)</div>`);
+            }
+
+            if (matches.length === 0) {
+                const emptyText = modelsCache.length ? 'No matching models' : 'No models available';
+                options.push(`<div class="model-option-empty">${escapeHtml(emptyText)}</div>`);
+            } else {
+                for (const m of matches) {
+                    const id = m.id || '';
+                    const display = getModelDisplayName(id);
+                    const selectedClass = id === selectedModelId ? 'selected' : '';
+                    options.push(`
+                        <div class="model-option ${selectedClass}" data-model-id="${escapeHtml(id)}">
+                            <div class="model-option-name">${escapeHtml(display)}</div>
+                            <div class="model-option-id">${escapeHtml(id)}</div>
+                        </div>
+                    `);
+                }
+            }
+
+            dropdown.innerHTML = options.join('');
+        }
+
+        function openModelDropdown() {
+            const dropdown = document.getElementById('modelDropdown');
+            if (dropdown) {
+                dropdown.classList.add('open');
+            }
+        }
+
+        function closeModelDropdown() {
+            const dropdown = document.getElementById('modelDropdown');
+            if (dropdown) {
+                dropdown.classList.remove('open');
+            }
+        }
+
+        function setupModelPicker() {
+            const searchInput = document.getElementById('modelSearchInput');
+            const dropdown = document.getElementById('modelDropdown');
+            const resetBtn = document.getElementById('modelResetBtn');
+            const picker = document.getElementById('modelPicker');
+
+            if (!searchInput || !dropdown) return;
+
+            searchInput.addEventListener('focus', () => {
+                renderModelDropdown(searchInput.value);
+                openModelDropdown();
+            });
+
+            searchInput.addEventListener('input', () => {
+                renderModelDropdown(searchInput.value);
+                openModelDropdown();
+            });
+
+            searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    closeModelDropdown();
+                    searchInput.blur();
+                }
+            });
+
+            if (resetBtn) {
+                resetBtn.addEventListener('click', () => {
+                    setSelectedModel('');
+                    searchInput.value = '';
+                    closeModelDropdown();
+                });
+            }
+
+            if (dropdown.dataset.listenersInstalled !== '1') {
+                dropdown.dataset.listenersInstalled = '1';
+                dropdown.addEventListener('click', (e) => {
+                    const option = e.target.closest('.model-option');
+                    if (!option) return;
+                    const modelId = option.dataset.modelId || '';
+                    setSelectedModel(modelId);
+                    searchInput.value = '';
+                    closeModelDropdown();
+                });
+            }
+
+            if (picker && picker.dataset.listenersInstalled !== '1') {
+                picker.dataset.listenersInstalled = '1';
+                document.addEventListener('click', (e) => {
+                    if (!picker.contains(e.target)) {
+                        closeModelDropdown();
+                    }
+                });
+            }
+        }
 
         async function loadModelsFromApi() {
             const apiKey = document.getElementById('apiKey').value;
-            if (!apiKey) return;
+            if (!apiKey || !API_URL) {
+                modelsCache = [];
+                modelDisplayNames = {};
+                updateModelSelectionUI();
+                renderModelDropdown('');
+                return;
+            }
 
             try {
                 const resp = await fetch(`${API_URL}/models`, {
@@ -2202,50 +2568,21 @@ Instructions for Claude on how to use this skill..."></textarea>
                 if (!resp.ok) return;
                 const data = await resp.json();
                 const models = data.models || [];
-                if (models.length === 0) return;
 
-                const select = document.getElementById('modelSelect');
-                const saved = localStorage.getItem('clawed_model') || '';
-                const options = ['<option value=\"\">Default</option>'];
-
+                modelsCache = models;
                 modelDisplayNames = {};
                 for (const m of models) {
                     if (!m.id) continue;
                     modelDisplayNames[m.id] = m.display_name || m.id;
-                    options.push(`<option value=\"${escapeHtml(m.id)}\">${escapeHtml(modelDisplayNames[m.id])}</option>`);
                 }
 
-                select.innerHTML = options.join('');
-                const hasSaved = Array.from(select.options).some(o => o.value === saved);
-                select.value = hasSaved ? saved : '';
+                defaultModelId = data.default_model_id || (data.defaults ? data.defaults.sonnet : '') || defaultModelId;
+                defaultModelAlias = data.default_model_alias || defaultModelAlias;
+                updateModelSelectionUI();
+                renderModelDropdown(document.getElementById('modelSearchInput')?.value || '');
             } catch (e) {
-                // ignore; keep static fallback options
+                // ignore; keep existing list
             }
-        }
-
-        function loadModel() {
-            const saved = localStorage.getItem('clawed_model');
-            const select = document.getElementById('modelSelect');
-            if (!saved) return;
-            const hasOption = Array.from(select.options).some(o => o.value === saved);
-            if (hasOption) {
-                select.value = saved;
-            } else {
-                localStorage.removeItem('clawed_model');
-            }
-        }
-
-        function saveModel() {
-            const model = document.getElementById('modelSelect').value;
-            localStorage.setItem('clawed_model', model);
-        }
-
-        function getSelectedModel() {
-            return document.getElementById('modelSelect').value;
-        }
-
-        function getModelDisplayName(modelId) {
-            return modelDisplayNames[modelId] || modelId;
         }
 
         // Skill management
@@ -2676,10 +3013,16 @@ Instructions for Claude on how to use this skill..."></textarea>
         // Settings modal functions
         function openSettingsModal() {
             document.getElementById('settingsModal').classList.add('active');
+            const searchInput = document.getElementById('modelSearchInput');
+            if (searchInput) {
+                searchInput.value = '';
+                renderModelDropdown('');
+            }
         }
 
         function closeSettingsModal() {
             document.getElementById('settingsModal').classList.remove('active');
+            closeModelDropdown();
         }
 
         // Close settings modal on outside click or Escape
@@ -4893,11 +5236,12 @@ Instructions for Claude on how to use this skill..."></textarea>
                 document.getElementById(loadingId)?.remove();
                 const assistantMsgId = 'assistant-' + Date.now();
                 messageMarkdown[assistantMsgId] = '';
+                const modelBadgeLabel = getModelBadgeLabel(selectedModel);
                 messagesEl.innerHTML += `
                     <div class="message assistant" id="${assistantMsgId}" data-markdown="">
                         <div class="message-header">
                             <div class="message-avatar">C</div>
-                            <div class="message-role">Clawed<span class="model-badge">${getModelDisplayName(selectedModel)}</span></div>
+                            <div class="message-role">Clawed${modelBadgeLabel ? `<span class="model-badge">${escapeHtml(modelBadgeLabel)}</span>` : ''}</div>
                             <div class="message-actions">
                                 <button class="copy-btn" id="${assistantMsgId}-copy" onclick="copyMessageMarkdown('${assistantMsgId}')">Copy</button>
                             </div>
@@ -5017,8 +5361,11 @@ Instructions for Claude on how to use this skill..."></textarea>
             const encodedMarkdown = encodeURIComponent(markdown);
 
             let modelHtml = '';
-            if (!isUser && msg.model) {
-                modelHtml = `<span class="model-badge">${getModelDisplayName(msg.model)}</span>`;
+            if (!isUser) {
+                const label = getModelBadgeLabel(msg.model || '');
+                if (label) {
+                    modelHtml = `<span class="model-badge">${escapeHtml(label)}</span>`;
+                }
             }
 
             let filesHtml = '';
