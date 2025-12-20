@@ -57,3 +57,5 @@ AGENTS.md
 !/.claude/CLAUDE.md
 
 workspace_tree.py
+
+.cursorindexingignore
