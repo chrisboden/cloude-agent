@@ -480,7 +480,8 @@ async def realtime_webhook(request: Request):
     raw_body = await request.body()
     try:
         client = OpenAI(webhook_secret=OPENAI_WEBHOOK_SECRET)
-        event = client.webhooks.unwrap(raw_body, dict(request.headers))
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        event = client.webhooks.unwrap(raw_body, headers)
     except InvalidWebhookSignatureError:
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
     except Exception:
