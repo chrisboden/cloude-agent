@@ -2,6 +2,8 @@ import os
 import json
 import time
 import logging
+import asyncio
+from collections import deque
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Request, Form
@@ -11,6 +13,8 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from agent_manager import AgentManager, WORKSPACE_DIR
 import httpx
+from openai import OpenAI, InvalidWebhookSignatureError
+import websockets
 
 
 # Config
@@ -23,9 +27,19 @@ if not API_KEY:
     raise RuntimeError("API_KEY is required.")
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_WEBHOOK_SECRET = os.environ.get("OPENAI_WEBHOOK_SECRET")
+REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime")
+REALTIME_VOICE = os.environ.get("OPENAI_REALTIME_VOICE", "marin")
+REALTIME_TRANSCRIBE_MODEL = os.environ.get("OPENAI_REALTIME_TRANSCRIBE_MODEL", "gpt-4o-transcribe")
+REALTIME_GREETING = os.environ.get(
+    "OPENAI_REALTIME_GREETING",
+    "Hello, you're speaking with Cloude. How can I help?"
+)
 
 agent_manager: Optional[AgentManager] = None
 _models_cache: dict = {"fetched_at": 0.0, "models": None, "error": None}
+_active_realtime_calls: dict[str, asyncio.Task] = {}
 
 
 @asynccontextmanager
@@ -123,6 +137,216 @@ class WorkspaceMoveRequest(BaseModel):
     src: str = Field(..., description="Workspace-relative source path")
     dst: str = Field(..., description="Workspace-relative destination path")
     overwrite: bool = Field(default=False, description="Whether to overwrite destination if it exists")
+
+
+def _parse_sip_headers(sip_headers: Optional[list[dict]]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for header in sip_headers or []:
+        name = (header.get("name") or "").strip().lower()
+        value = (header.get("value") or "").strip()
+        if name:
+            headers[name] = value
+    return headers
+
+
+def _extract_sip_user(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    trimmed = value.strip()
+    if "sip:" in trimmed:
+        trimmed = trimmed.split("sip:", 1)[1]
+    user = trimmed.split("@", 1)[0]
+    return user or None
+
+
+def _build_realtime_accept_payload() -> dict:
+    return {
+        "type": "realtime",
+        "model": REALTIME_MODEL,
+        "instructions": (
+            "You are the voice for the Cloude Agent. Only speak when instructed, "
+            "and read responses naturally and clearly."
+        ),
+        "output_modalities": ["audio"],
+        "audio": {
+            "input": {
+                "format": {"type": "audio/pcmu"},
+                "transcription": {
+                    "model": REALTIME_TRANSCRIBE_MODEL,
+                    "language": "en",
+                },
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 500,
+                    "interrupt_response": True,
+                    "create_response": False,
+                },
+            },
+            "output": {
+                "format": {"type": "audio/pcmu"},
+                "voice": REALTIME_VOICE,
+            },
+        },
+    }
+
+
+def _build_voice_prompt(transcript: str, caller_label: str) -> str:
+    return (
+        "You are on a live phone call. Respond with concise, natural spoken sentences. "
+        "Do not use tools, do not mention files, and do not include markdown.\n\n"
+        f"Caller ({caller_label}) said:\n{transcript}"
+    )
+
+
+async def _handle_realtime_call(call_id: str, metadata: dict[str, str], caller_label: str) -> None:
+    if not OPENAI_API_KEY:
+        logger.error("OPENAI_API_KEY is not set; cannot accept call %s", call_id)
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"https://api.openai.com/v1/realtime/calls/{call_id}/accept",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=_build_realtime_accept_payload(),
+            )
+            response.raise_for_status()
+    except Exception:
+        logger.exception("Failed to accept realtime call %s", call_id)
+        return
+
+    ws_url = f"wss://api.openai.com/v1/realtime?call_id={call_id}"
+    transcript_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+    pending_responses: deque[asyncio.Future] = deque()
+    send_lock = asyncio.Lock()
+    worker_task: Optional[asyncio.Task] = None
+    receiver_task: Optional[asyncio.Task] = None
+
+    async def send_audio_response(ws, text: str) -> None:
+        instructions = (
+            "Speak the following to the caller verbatim. Do not add commentary.\n\n"
+            f"{text}"
+        )
+        payload = {
+            "type": "response.create",
+            "response": {
+                "instructions": instructions,
+                "output_modalities": ["audio"],
+            },
+        }
+        future = asyncio.get_running_loop().create_future()
+        pending_responses.append(future)
+        try:
+            async with send_lock:
+                await ws.send(json.dumps(payload))
+        except Exception:
+            if pending_responses and pending_responses[-1] is future:
+                pending_responses.pop()
+            future.cancel()
+            raise
+        try:
+            await asyncio.wait_for(future, timeout=60)
+        except asyncio.TimeoutError:
+            logger.warning("Timed out waiting for response.done for call %s", call_id)
+
+    async def process_transcripts(ws) -> None:
+        while True:
+            transcript = await transcript_queue.get()
+            if transcript is None:
+                return
+            if not agent_manager:
+                logger.error("Agent manager not initialized; dropping transcript for %s", call_id)
+                continue
+            prompt = _build_voice_prompt(transcript, caller_label)
+            try:
+                result = await agent_manager.chat(
+                    user_session_id=f"call-{call_id}",
+                    message=prompt,
+                    images=None,
+                    context={
+                        "source": "voice-call",
+                        "user_name": caller_label,
+                        "permission_mode": "acceptEdits",
+                        "metadata": metadata,
+                    },
+                    model=None,
+                )
+            except Exception:
+                logger.exception("Claude chat failed for call %s", call_id)
+                continue
+
+            response_text = (result.get("response") or "").strip()
+            if not response_text:
+                continue
+            try:
+                await send_audio_response(ws, response_text)
+            except Exception:
+                logger.exception("Failed sending response for call %s", call_id)
+                return
+
+    async def receive_loop(ws) -> None:
+        async for raw_message in ws:
+            try:
+                event = json.loads(raw_message)
+            except json.JSONDecodeError:
+                continue
+
+            event_type = event.get("type")
+            if event_type == "conversation.item.input_audio_transcription.completed":
+                transcript = (event.get("transcript") or "").strip()
+                if transcript:
+                    await transcript_queue.put(transcript)
+            elif event_type == "response.done":
+                if pending_responses:
+                    future = pending_responses.popleft()
+                    if not future.done():
+                        future.set_result(True)
+            elif event_type == "error":
+                logger.error("Realtime error for call %s: %s", call_id, event.get("error"))
+
+    try:
+        async with websockets.connect(
+            ws_url,
+            extra_headers=[("Authorization", f"Bearer {OPENAI_API_KEY}")],
+        ) as ws:
+            receiver_task = asyncio.create_task(receive_loop(ws))
+            worker_task = asyncio.create_task(process_transcripts(ws))
+            try:
+                await send_audio_response(ws, REALTIME_GREETING)
+            except Exception:
+                logger.exception("Failed to send greeting for call %s", call_id)
+            try:
+                await receiver_task
+            except Exception:
+                logger.exception("Realtime receive loop failed for call %s", call_id)
+    except Exception:
+        logger.exception("Realtime websocket failed for call %s", call_id)
+    finally:
+        try:
+            while True:
+                try:
+                    transcript_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            await transcript_queue.put(None)
+        except Exception:
+            pass
+        while pending_responses:
+            future = pending_responses.popleft()
+            if not future.done():
+                future.set_exception(RuntimeError("Realtime connection closed"))
+        if receiver_task:
+            receiver_task.cancel()
+        if worker_task:
+            try:
+                await worker_task
+            except Exception:
+                logger.exception("Transcript worker failed for call %s", call_id)
 
 
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
@@ -244,6 +468,48 @@ async def webhook(
         )
 
     return ChatResponse(**result)
+
+
+@app.post("/realtime")
+async def realtime_webhook(request: Request):
+    if not OPENAI_WEBHOOK_SECRET:
+        raise HTTPException(status_code=500, detail="OPENAI_WEBHOOK_SECRET is not configured")
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured")
+
+    raw_body = await request.body()
+    try:
+        client = OpenAI(webhook_secret=OPENAI_WEBHOOK_SECRET)
+        event = client.webhooks.unwrap(raw_body, dict(request.headers))
+    except InvalidWebhookSignatureError:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+    except Exception:
+        logger.exception("Invalid OpenAI webhook payload")
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+
+    if event.type != "realtime.call.incoming":
+        return Response(status_code=200)
+
+    call_id = getattr(event.data, "call_id", None)
+    if not call_id:
+        raise HTTPException(status_code=400, detail="Missing call_id in webhook payload")
+
+    sip_headers = _parse_sip_headers(getattr(event.data, "sip_headers", None))
+    caller_label = _extract_sip_user(sip_headers.get("from")) or sip_headers.get("from") or "Caller"
+    metadata = {
+        "call_id": call_id,
+        "from": sip_headers.get("from", ""),
+        "to": sip_headers.get("to", ""),
+        "sip_call_id": sip_headers.get("call-id", ""),
+    }
+
+    if call_id in _active_realtime_calls:
+        return Response(status_code=200)
+
+    task = asyncio.create_task(_handle_realtime_call(call_id, metadata, caller_label))
+    _active_realtime_calls[call_id] = task
+    task.add_done_callback(lambda _: _active_realtime_calls.pop(call_id, None))
+    return Response(status_code=200)
 
 
 @app.post("/chat/stream", dependencies=[Depends(verify_api_key)])
