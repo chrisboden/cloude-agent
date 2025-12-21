@@ -7,7 +7,11 @@ SKILLS_DIR="${SKILLS_DIR:-$WORKSPACE_DIR/.claude/skills}"
 COMMANDS_DIR="${COMMANDS_DIR:-$WORKSPACE_DIR/.claude/commands}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-$WORKSPACE_DIR/.claude/scripts}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-$WORKSPACE_DIR/artifacts}"
-CLAUDE_CONFIG_DIR="${WORKSPACE_DIR}/.claude-home"
+CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$WORKSPACE_DIR/.claude-home}"
+CLAUDE_MEM_DATA_DIR="${CLAUDE_MEM_DATA_DIR:-$WORKSPACE_DIR/.claude-mem}"
+CLAUDE_MEM_WORKER_PORT="${CLAUDE_MEM_WORKER_PORT:-37777}"
+CLAUDE_MEM_WORKER_HOST="${CLAUDE_MEM_WORKER_HOST:-127.0.0.1}"
+CLAUDE_MEM_ENABLED="${CLAUDE_MEM_ENABLED:-1}"
 
 # Create directories if they don't exist
 mkdir -p "$WORKSPACE_DIR"
@@ -16,6 +20,7 @@ mkdir -p "$COMMANDS_DIR"
 mkdir -p "$SCRIPTS_DIR"
 mkdir -p "$ARTIFACTS_DIR"
 mkdir -p "$CLAUDE_CONFIG_DIR"
+mkdir -p "$CLAUDE_MEM_DATA_DIR"
 
 # Seed default commands/skills from the image into the volume on first run.
 # This keeps "one-click deploy" usable while still allowing runtime edits on the volume.
@@ -62,6 +67,7 @@ find "$SCRIPTS_DIR" -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
 # If we're root, change ownership to appuser
 if [ "$(id -u)" = "0" ]; then
     chown -R appuser:appuser "$WORKSPACE_DIR"
+    chown -R appuser:appuser "$CLAUDE_MEM_DATA_DIR"
 
     # Symlink ~/.claude to persistent volume storage
     # This ensures sessions persist across deployments
@@ -72,6 +78,19 @@ if [ "$(id -u)" = "0" ]; then
         chown -h appuser:appuser "$APPUSER_HOME/.claude"
     fi
 
+    export CLAUDE_CONFIG_DIR
+    export CLAUDE_MEM_DATA_DIR
+    export CLAUDE_MEM_WORKER_PORT
+    export CLAUDE_MEM_WORKER_HOST
+
+    if [ "$CLAUDE_MEM_ENABLED" = "1" ] && command -v claude >/dev/null 2>&1; then
+        INSTALL_FILE="$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json"
+        if ! grep -q '"claude-mem@thedotmack"' "$INSTALL_FILE" 2>/dev/null; then
+            su appuser -c "CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR' CLAUDE_MEM_DATA_DIR='$CLAUDE_MEM_DATA_DIR' CLAUDE_MEM_WORKER_PORT='$CLAUDE_MEM_WORKER_PORT' CLAUDE_MEM_WORKER_HOST='$CLAUDE_MEM_WORKER_HOST' claude plugin marketplace add thedotmack/claude-mem" || true
+            su appuser -c "CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR' CLAUDE_MEM_DATA_DIR='$CLAUDE_MEM_DATA_DIR' CLAUDE_MEM_WORKER_PORT='$CLAUDE_MEM_WORKER_PORT' CLAUDE_MEM_WORKER_HOST='$CLAUDE_MEM_WORKER_HOST' claude plugin install claude-mem@thedotmack || claude plugin install claude-mem" || true
+        fi
+    fi
+
     # Run the app as appuser
     exec su appuser -c "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"
 else
@@ -79,6 +98,19 @@ else
     if [ ! -L "$HOME/.claude" ]; then
         rm -rf "$HOME/.claude" 2>/dev/null || true
         ln -sf "$CLAUDE_CONFIG_DIR" "$HOME/.claude"
+    fi
+
+    export CLAUDE_CONFIG_DIR
+    export CLAUDE_MEM_DATA_DIR
+    export CLAUDE_MEM_WORKER_PORT
+    export CLAUDE_MEM_WORKER_HOST
+
+    if [ "$CLAUDE_MEM_ENABLED" = "1" ] && command -v claude >/dev/null 2>&1; then
+        INSTALL_FILE="$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json"
+        if ! grep -q '"claude-mem@thedotmack"' "$INSTALL_FILE" 2>/dev/null; then
+            CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" CLAUDE_MEM_DATA_DIR="$CLAUDE_MEM_DATA_DIR" CLAUDE_MEM_WORKER_PORT="$CLAUDE_MEM_WORKER_PORT" CLAUDE_MEM_WORKER_HOST="$CLAUDE_MEM_WORKER_HOST" claude plugin marketplace add thedotmack/claude-mem || true
+            CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" CLAUDE_MEM_DATA_DIR="$CLAUDE_MEM_DATA_DIR" CLAUDE_MEM_WORKER_PORT="$CLAUDE_MEM_WORKER_PORT" CLAUDE_MEM_WORKER_HOST="$CLAUDE_MEM_WORKER_HOST" claude plugin install claude-mem@thedotmack || claude plugin install claude-mem || true
+        fi
     fi
 
     exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}

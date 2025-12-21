@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 # Install Node.js 20 and required system tools
 RUN apt-get update && \
-    apt-get install -y curl gnupg procps && \
+    apt-get install -y curl gnupg procps unzip git ca-certificates && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && \
@@ -33,6 +33,10 @@ RUN mkdir -p /app/workspace && \
 # Default port (Railway sets PORT env var)
 ENV PORT=8080
 ENV WORKSPACE_DIR=/app/workspace
+ENV CLAUDE_MEM_WORKER_PORT=37777
+ENV CLAUDE_MEM_WORKER_HOST=127.0.0.1
+ENV CLAUDE_MEM_DATA_DIR=/app/workspace/.claude-mem
+ENV CLAUDE_CONFIG_DIR=/app/workspace/.claude-home
 EXPOSE 8080
 
 # Use entrypoint to handle volume permissions then drop to appuser
