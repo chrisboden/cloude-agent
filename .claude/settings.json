@@ -1,7 +1,19 @@
 {
   "permissions": {
+    "defaultMode": "acceptEdits",
     "allow": [
-      "Bash(./.claude/scripts/*)"
+      "Skill",
+      "SlashCommand",
+      "Read(./**)",
+      "Write(./**)",
+      "Edit(./**)",
+      "Bash(./.claude/scripts/*)",
+      "Bash(./.claude/skills/*/scripts/*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)"
     ]
   }
 }

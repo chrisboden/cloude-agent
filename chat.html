@@ -1522,6 +1522,16 @@
             color: var(--success);
         }
 
+        .session-entry-type.tool-use {
+            background: rgba(96, 165, 250, 0.2);
+            color: #93c5fd;
+        }
+
+        .session-entry-type.tool-result {
+            background: rgba(34, 197, 94, 0.2);
+            color: #86efac;
+        }
+
         .session-entry-timestamp {
             margin-left: auto;
             font-family: 'JetBrains Mono', monospace;
@@ -4716,30 +4726,143 @@ Instructions for Claude on how to use this skill..."></textarea>
             }
         }
 
-        function renderSessionDetail(session) {
-            const contentEl = document.getElementById('sessionsContent');
+        function formatSessionBlockContent(content) {
+            if (Array.isArray(content)) {
+                const textBlocks = content.filter(c => c && c.type === 'text' && typeof c.text === 'string');
+                const otherBlocks = content.filter(c => !c || c.type !== 'text');
+                const parts = [];
+                if (textBlocks.length) {
+                    parts.push(textBlocks.map(c => c.text).join('\n'));
+                }
+                if (otherBlocks.length) {
+                    parts.push(otherBlocks.map(formatSessionBlock).join('\n\n'));
+                }
+                return parts.join('\n\n');
+            }
 
-            const entriesHtml = session.entries.map((entry, idx) => {
-                const type = entry.type || 'unknown';
-                const typeClass = type.toLowerCase();
-                const timestamp = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
+            if (content && typeof content === 'object') {
+                return JSON.stringify(content, null, 2);
+            }
 
-                let content = '';
-                if (entry.message && entry.message.content) {
-                    // User or assistant message
-                    if (typeof entry.message.content === 'string') {
-                        content = entry.message.content;
-                    } else if (Array.isArray(entry.message.content)) {
-                        content = entry.message.content
-                            .filter(c => c.type === 'text')
-                            .map(c => c.text)
-                            .join('\n');
+            return content == null ? '' : String(content);
+        }
+
+        function formatSessionBlock(block) {
+            if (!block || typeof block !== 'object') {
+                return String(block);
+            }
+
+            const type = block.type || 'unknown';
+            if (type === 'tool_use') {
+                const name = block.name || 'unknown';
+                const id = block.id ? ` (${block.id})` : '';
+                const input = block.input === undefined ? '' : JSON.stringify(block.input, null, 2);
+                return `[tool_use] ${name}${id}${input ? `\n${input}` : ''}`;
+            }
+
+            if (type === 'tool_result') {
+                const id = block.tool_use_id ? ` (${block.tool_use_id})` : '';
+                const status = block.is_error ? ' error' : '';
+                const content = formatSessionBlockContent(block.content);
+                return `[tool_result${status}]${id}${content ? `\n${content}` : ''}`;
+            }
+
+            if (type === 'image') {
+                const mediaType = block.source?.media_type || 'image';
+                const dataLength = block.source?.data ? block.source.data.length : 0;
+                const sizeLabel = dataLength ? ` (${dataLength} bytes base64)` : '';
+                return `[image] ${mediaType}${sizeLabel}`;
+            }
+
+            if (type === 'text') {
+                return block.text || '';
+            }
+
+            return JSON.stringify(block, null, 2);
+        }
+
+        function buildSessionEntryDisplay(entry) {
+            let displayType = entry.type || 'unknown';
+            let displayRole = entry.message?.role || '';
+            let textContent = '';
+            let toolUseBlocks = [];
+            let toolResultBlocks = [];
+            let otherBlocks = [];
+
+            const msgContent = entry.message?.content;
+            if (typeof msgContent === 'string') {
+                textContent = msgContent;
+            } else if (Array.isArray(msgContent)) {
+                for (const block of msgContent) {
+                    if (block && block.type === 'text') {
+                        if (block.text) {
+                            textContent = textContent ? `${textContent}\n${block.text}` : block.text;
+                        }
+                    } else if (block && block.type === 'tool_use') {
+                        toolUseBlocks.push(block);
+                    } else if (block && block.type === 'tool_result') {
+                        toolResultBlocks.push(block);
+                    } else if (block) {
+                        otherBlocks.push(block);
                     }
-                } else if (entry.result) {
+                }
+            } else if (msgContent != null) {
+                textContent = JSON.stringify(msgContent, null, 2);
+            }
+
+            const trimmedText = (textContent || '').trim();
+            const isPlaceholderText = trimmedText === '' || trimmedText === '(no content)';
+            const formattedBlocks = [
+                ...toolUseBlocks.map(formatSessionBlock),
+                ...toolResultBlocks.map(formatSessionBlock),
+                ...otherBlocks.map(formatSessionBlock),
+            ].filter(Boolean);
+
+            let content = '';
+            if (formattedBlocks.length) {
+                content = isPlaceholderText
+                    ? formattedBlocks.join('\n\n')
+                    : [textContent, formattedBlocks.join('\n\n')].filter(Boolean).join('\n\n');
+            } else {
+                content = textContent;
+            }
+
+            if (isPlaceholderText && !formattedBlocks.length) {
+                if (entry.result) {
                     content = JSON.stringify(entry.result, null, 2);
                 } else {
                     content = JSON.stringify(entry, null, 2);
                 }
+            } else if (!content) {
+                if (entry.result) {
+                    content = JSON.stringify(entry.result, null, 2);
+                } else {
+                    content = JSON.stringify(entry, null, 2);
+                }
+            }
+
+            if (isPlaceholderText && toolResultBlocks.length) {
+                displayType = 'tool-result';
+                displayRole = 'tool';
+            } else if (isPlaceholderText && toolUseBlocks.length) {
+                displayType = 'tool-use';
+                displayRole = 'tool';
+            }
+
+            return { displayType, displayRole, content };
+        }
+
+        function sanitizeSessionTypeClass(type) {
+            return (type || 'unknown').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+        }
+
+        function renderSessionDetail(session) {
+            const contentEl = document.getElementById('sessionsContent');
+
+            const entriesHtml = session.entries.map((entry, idx) => {
+                const { displayType, displayRole, content } = buildSessionEntryDisplay(entry);
+                const typeClass = sanitizeSessionTypeClass(displayType);
+                const timestamp = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
 
                 // Truncate very long content for display
                 const displayContent = content.length > 5000
@@ -4749,8 +4872,8 @@ Instructions for Claude on how to use this skill..."></textarea>
                 return `
                     <div class="session-entry">
                         <div class="session-entry-header" onclick="toggleEntryContent(${idx})">
-                            <span class="session-entry-type ${typeClass}">${escapeHtml(type)}</span>
-                            <span>${entry.message?.role || ''}</span>
+                            <span class="session-entry-type ${typeClass}">${escapeHtml(displayType)}</span>
+                            <span>${escapeHtml(displayRole)}</span>
                             <span class="session-entry-timestamp">${timestamp}</span>
                         </div>
                         <div class="session-entry-content" id="entry-content-${idx}">
@@ -5256,6 +5379,8 @@ Instructions for Claude on how to use this skill..."></textarea>
                 let fullResponse = '';
                 let toolsUsed = [];
                 let currentStatus = '';
+                let pendingPlaceholder = '';
+                let sawToolActivity = false;
 
                 // Status messages for UI
                 const statusMessages = {
@@ -5293,15 +5418,25 @@ Instructions for Claude on how to use this skill..."></textarea>
                                         contentEl.innerHTML = `<div class="status-indicator">${statusText}</div>`;
                                     }
                                 } else if (event.type === 'text') {
-                                    fullResponse += event.text;
-                                    contentEl.innerHTML = formatContent(fullResponse);
-                                    messageMarkdown[assistantMsgId] = fullResponse;
-                                    const msgEl = document.getElementById(assistantMsgId);
-                                    if (msgEl) {
-                                        msgEl.dataset.markdown = encodeURIComponent(fullResponse);
+                                    const incomingText = event.text || '';
+                                    const trimmedText = incomingText.trim();
+                                    if (trimmedText === '(no content)' && !fullResponse.trim()) {
+                                        pendingPlaceholder = incomingText;
+                                    } else {
+                                        if (pendingPlaceholder) {
+                                            pendingPlaceholder = '';
+                                        }
+                                        fullResponse += incomingText;
+                                        contentEl.innerHTML = formatContent(fullResponse);
+                                        messageMarkdown[assistantMsgId] = fullResponse;
+                                        const msgEl = document.getElementById(assistantMsgId);
+                                        if (msgEl) {
+                                            msgEl.dataset.markdown = encodeURIComponent(fullResponse);
+                                        }
+                                        scrollToBottom();
                                     }
-                                    scrollToBottom();
                                 } else if (event.type === 'tool') {
+                                    sawToolActivity = true;
                                     // Show tool with status
                                     const toolStatus = event.status === 'started' ? '⏳' : '✅';
                                     if (event.status === 'started') {
@@ -5319,6 +5454,19 @@ Instructions for Claude on how to use this skill..."></textarea>
                                     }).join('');
                                     scrollToBottom();
                                 } else if (event.type === 'done') {
+                                    if (!fullResponse.trim()) {
+                                        if (pendingPlaceholder && !sawToolActivity) {
+                                            fullResponse = pendingPlaceholder;
+                                            contentEl.innerHTML = formatContent(fullResponse);
+                                            messageMarkdown[assistantMsgId] = fullResponse;
+                                            const msgEl = document.getElementById(assistantMsgId);
+                                            if (msgEl) {
+                                                msgEl.dataset.markdown = encodeURIComponent(fullResponse);
+                                            }
+                                        } else if (sawToolActivity) {
+                                            contentEl.innerHTML = '<div class="status-indicator">✅ Tool run completed.</div>';
+                                        }
+                                    }
                                     updateChatInStorage(currentSessionId, message, { 
                                         response: fullResponse, 
                                         tools_used: toolsUsed,

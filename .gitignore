@@ -30,6 +30,7 @@ build/
 /.cursor/mcp.json
 
 test_*
+test*
 report.md
 plan.md
 peregian-hub-annual-report-2025.html
