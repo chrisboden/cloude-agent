@@ -6,7 +6,8 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse, FileResponse
+from fastapi.responses import Response, StreamingResponse, FileResponse, RedirectResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 from typing import Optional
 from agent_manager import AgentManager, WORKSPACE_DIR
@@ -18,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 API_KEY = os.environ.get("API_KEY")
 ALLOW_BYPASS_PERMISSIONS = os.environ.get("ALLOW_BYPASS_PERMISSIONS", "0") == "1"
+CLAUDE_MEM_ENABLED = os.environ.get("CLAUDE_MEM_ENABLED", "1") == "1"
+CLAUDE_MEM_WORKER_HOST = os.environ.get("CLAUDE_MEM_WORKER_HOST", "127.0.0.1")
+CLAUDE_MEM_WORKER_PORT = int(os.environ.get("CLAUDE_MEM_WORKER_PORT", "37777"))
+CLAUDE_MEM_PROXY_PUBLIC = os.environ.get("CLAUDE_MEM_PROXY_PUBLIC", "0") == "1"
 
 if not API_KEY:
     raise RuntimeError("API_KEY is required.")
@@ -26,6 +31,17 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
 agent_manager: Optional[AgentManager] = None
 _models_cache: dict = {"fetched_at": 0.0, "models": None, "error": None}
+_CLAUDE_MEM_PROXY_COOKIE = "claude_mem_proxy_key"
+_HOP_BY_HOP_HEADERS = {
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+}
 
 
 def _is_openrouter_enabled() -> bool:
@@ -86,6 +102,89 @@ async def verify_api_key_webhook(
     key = x_api_key or api_key
     if not key or key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+def _claude_mem_base_url() -> str:
+    return f"http://{CLAUDE_MEM_WORKER_HOST}:{CLAUDE_MEM_WORKER_PORT}"
+
+
+def _claude_mem_proxy_allowed(request: Request) -> tuple[bool, bool]:
+    if CLAUDE_MEM_PROXY_PUBLIC:
+        return True, False
+    header_key = request.headers.get("X-API-Key")
+    if header_key and header_key == API_KEY:
+        return True, False
+    query_key = request.query_params.get("api_key")
+    if query_key and query_key == API_KEY:
+        return True, True
+    cookie_key = request.cookies.get(_CLAUDE_MEM_PROXY_COOKIE)
+    if cookie_key and cookie_key == API_KEY:
+        return True, False
+    return False, False
+
+
+async def _close_proxy_response(response: httpx.Response, client: httpx.AsyncClient) -> None:
+    await response.aclose()
+    await client.aclose()
+
+
+async def _proxy_claude_mem(request: Request, upstream_path: str) -> Response:
+    if not CLAUDE_MEM_ENABLED:
+        raise HTTPException(status_code=404, detail="Claude-Mem is disabled")
+
+    allowed, set_cookie = _claude_mem_proxy_allowed(request)
+    if not allowed:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    params = [(key, value) for key, value in request.query_params.multi_items() if key != "api_key"]
+    forward_headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in _HOP_BY_HOP_HEADERS
+        and key.lower() not in {"host", "content-length", "x-api-key", "cookie"}
+    }
+    body = await request.body()
+
+    base_url = _claude_mem_base_url().rstrip("/")
+    path = "/" + upstream_path.lstrip("/")
+    url = f"{base_url}{path}"
+
+    client = httpx.AsyncClient(timeout=None)
+    try:
+        upstream_request = client.build_request(
+            request.method,
+            url,
+            params=params or None,
+            headers=forward_headers,
+            content=body if body else None,
+        )
+        upstream_response = await client.send(upstream_request, stream=True)
+    except httpx.RequestError:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="Claude-Mem worker unavailable")
+
+    response_headers = {
+        key: value
+        for key, value in upstream_response.headers.items()
+        if key.lower() not in _HOP_BY_HOP_HEADERS and key.lower() != "content-length"
+    }
+    proxy_response = StreamingResponse(
+        upstream_response.aiter_raw(),
+        status_code=upstream_response.status_code,
+        headers=response_headers,
+        media_type=upstream_response.headers.get("content-type"),
+        background=BackgroundTask(_close_proxy_response, upstream_response, client),
+    )
+    if set_cookie:
+        proxy_response.set_cookie(
+            _CLAUDE_MEM_PROXY_COOKIE,
+            API_KEY,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+            path="/",
+        )
+    return proxy_response
 
 
 class ChatContext(BaseModel):
@@ -327,6 +426,32 @@ async def chat_stream(req: ChatRequest):
             "Connection": "keep-alive",
         }
     )
+
+
+@app.get("/claude-mem")
+async def claude_mem_redirect():
+    return RedirectResponse(url="/claude-mem/")
+
+
+@app.api_route(
+    "/claude-mem/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+async def claude_mem_proxy(request: Request, path: str):
+    return await _proxy_claude_mem(request, path)
+
+
+@app.api_route(
+    "/api/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+async def claude_mem_api_proxy(request: Request, path: str):
+    return await _proxy_claude_mem(request, f"api/{path}")
+
+
+@app.api_route("/stream", methods=["GET", "HEAD"])
+async def claude_mem_stream(request: Request):
+    return await _proxy_claude_mem(request, "stream")
 
 
 @app.get("/models", dependencies=[Depends(verify_api_key)])
@@ -850,6 +975,9 @@ async def root():
         "endpoints": {
             "POST /chat": "Send message to agent (supports `command` param for slash commands)",
             "POST /chat/stream": "Stream response from agent (SSE)",
+            "GET /claude-mem": "Claude-Mem viewer UI (proxy)",
+            "GET /api/{path}": "Claude-Mem API proxy",
+            "GET /stream": "Claude-Mem SSE stream proxy",
             "GET /commands": "List available commands",
             "GET /commands/{id}": "Get command template",
             "POST /commands": "Create/update a command",

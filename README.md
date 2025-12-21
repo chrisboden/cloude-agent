@@ -94,6 +94,7 @@ Simply add your preferred skills and slash commands to the workspace and you hav
 - **Web chat UI** (`chat.html`) — Claude.com-style interface with file explorer and searchable model picker
 - **Session persistence** — Redis-backed conversation history
 - **Webhook support** — trigger agent runs from external services
+- **Claude-Mem memory layer (optional)** — persistent memory across sessions with viewer UI (`/claude-mem/`)
 - **OpenRouter support** - allows you to use any LLM model from OpenRouter, manage keys for others, track usage, etc.
 
 ## API
@@ -138,6 +139,9 @@ Simply add your preferred skills and slash commands to the workspace and you hav
 ### System
 - `GET /health` — health check
 - `GET /chat.html` — chat UI
+- `GET /claude-mem` — Claude-Mem viewer UI (proxy)
+- `GET /api/{path}` — Claude-Mem API proxy
+- `GET /stream` — Claude-Mem SSE proxy
 - `GET /` — API info and endpoint list
 
 ## Auth
@@ -188,6 +192,24 @@ The chat UI uses `GET /models` to populate the searchable model picker and displ
 - Inside command markdown, use `$ARGUMENTS` (or positional `$1`, `$2`, etc.) to consume the arguments passed after `/{command}`.
 - Manage via API: `GET/POST/DELETE /commands` (and/or edit the files on the volume).
 - Useful for webhooks that need consistent prompt formatting and reliable routing.
+
+## Claude-Mem (Memory)
+
+This deployment can auto-install the `claude-mem` plugin to persist context across sessions. The memory database is stored on the workspace volume and the web viewer is proxied through the main app.
+
+**Viewer UI:**
+```
+https://your-app-name.up.railway.app/claude-mem/
+```
+
+**Auth for the viewer (default):**
+- Open the viewer once with `?api_key=YOUR_API_KEY` to set a cookie for `/api` and `/stream`.
+- Or set `CLAUDE_MEM_PROXY_PUBLIC=1` to make the viewer and proxy endpoints public.
+
+**Notes:**
+- Data dir defaults to `/app/workspace/.claude-mem`
+- Worker runs on `127.0.0.1:37777` inside the container
+- Set `CLAUDE_MEM_ENABLED=0` to disable installation and the proxy routes
 
 ## Webhooks
 
@@ -258,6 +280,12 @@ curl -sS -D - -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
 - `PROJECT_CONTEXT_PATH` (default `$WORKSPACE_DIR/.claude/CLAUDE.md`)
 - `MAX_PROJECT_CONTEXT_CHARS` (default `50000`)
 - `ALLOW_BYPASS_PERMISSIONS` (default `0`) — set to `1` to allow `permission_mode=bypassPermissions`
+- `CLAUDE_CONFIG_DIR` (default `/app/workspace/.claude-home`)
+- `CLAUDE_MEM_ENABLED` (default `1`) — set to `0` to disable claude-mem
+- `CLAUDE_MEM_DATA_DIR` (default `/app/workspace/.claude-mem`)
+- `CLAUDE_MEM_WORKER_PORT` (default `37777`)
+- `CLAUDE_MEM_WORKER_HOST` (default `127.0.0.1`)
+- `CLAUDE_MEM_PROXY_PUBLIC` (default `0`) — set to `1` to allow unauthenticated access to the Claude-Mem UI/API proxy
 - `PUBLIC_BASE_URL` (optional) — used by slash commands to generate fully-qualified artifact URLs (defaults to the production Railway URL in the included commands).
 
 ## Deployment (Railway)
