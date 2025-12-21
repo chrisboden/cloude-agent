@@ -18,8 +18,10 @@ Click the deploy button above. You'll be prompted for two environment variables:
 After deployment, generate a public URL for your service:
 
 1. Open your service in the Railway dashboard
-2. Go to **Settings** → **Networking**
-3. Click **Generate Domain** under "Public Networking"
+2. Click on Architecture tab in the top navbar
+3. Double click on the cloude-agent service to open the config panel
+4. Click on **Settings** and scroll down to **Networking**
+5. Click **Generate Domain** under "Public Networking"
 
 You'll get a URL like `https://your-app-name.up.railway.app`
 
@@ -89,9 +91,10 @@ Simply add your preferred skills and slash commands to the workspace and you hav
 - **Persistent workspace** — agent reads/writes files in `/app/workspace` (Railway volume-backed)
 - **Skill management** — list, add, delete, upload/download skills as zip files
 - **Slash commands** — define reusable prompt templates for consistent workflows
-- **Web chat UI** (`chat.html`) — Claude.com-style interface with file explorer
+- **Web chat UI** (`chat.html`) — Claude.com-style interface with file explorer and searchable model picker
 - **Session persistence** — Redis-backed conversation history
 - **Webhook support** — trigger agent runs from external services
+- **OpenRouter support** - allows you to use any LLM model from OpenRouter, manage keys for others, track usage, etc.
 
 ## API
 
@@ -101,7 +104,7 @@ Simply add your preferred skills and slash commands to the workspace and you hav
 - `POST /webhook` — webhook endpoint with flexible field mapping (supports `X-API-Key` header OR `api_key` query param)
 
 ### Models
-- `GET /models` — list available Claude models
+- `GET /models` — list available models (OpenRouter or Anthropic, based on env) and return server defaults
 
 ### Workspace
 - `GET /workspace` — list workspace files
@@ -141,6 +144,25 @@ Simply add your preferred skills and slash commands to the workspace and you hav
 - Set your ANTHROPIC_API_KEY in the Railway environment variables - this enables the Claude Agent to use the Anthropic LLM models.
 - Create your own API KEY for authentication - this is used to authenticate requests to the API.
 
+## OpenRouter + Model Routing
+You can route Claude Code through OpenRouter by setting these environment variables (Railway or local):
+
+```bash
+ANTHROPIC_BASE_URL=https://openrouter.ai/api
+ANTHROPIC_AUTH_TOKEN=sk-or-...
+ANTHROPIC_API_KEY=""   # important: explicitly blank
+```
+
+To override the default Claude Code aliases (Opus/Sonnet/Haiku) with OpenRouter model IDs:
+
+```bash
+ANTHROPIC_DEFAULT_OPUS_MODEL=openai/gpt-5.1-codex
+ANTHROPIC_DEFAULT_SONNET_MODEL=z-ai/glm-4.6
+ANTHROPIC_DEFAULT_HAIKU_MODEL=x-ai/grok-4.1-fast
+```
+
+The chat UI uses `GET /models` to populate the searchable model picker and displays the server default in Settings and the sidebar.
+
 ## Workspace Files (volume)
 - Mounted at `/app/workspace` (Railway volume).
 - Agent works in this directory (SDK `cwd` set).
@@ -156,6 +178,13 @@ Simply add your preferred skills and slash commands to the workspace and you hav
 - Commands are prompt templates stored at `$WORKSPACE_DIR/.claude/commands/{command_id}.md`
 - Invoke via `command` parameter in `/chat`: `{"command": "voice-transcript", "message": "the transcript text..."}`
 - Commands use Claude Code’s markdown format (YAML frontmatter + prompt body). Frontmatter `allowed-tools` controls what the command is allowed to run.
+- Commands can optionally pin a model via frontmatter (use OpenRouter IDs if routing through OpenRouter):
+  ```yaml
+  ---
+  model: z-ai/glm-4.6
+  ---
+  ```
+- If `model` is omitted, the command uses the server default (or the UI-selected override for chat requests).
 - Inside command markdown, use `$ARGUMENTS` (or positional `$1`, `$2`, etc.) to consume the arguments passed after `/{command}`.
 - Manage via API: `GET/POST/DELETE /commands` (and/or edit the files on the volume).
 - Useful for webhooks that need consistent prompt formatting and reliable routing.

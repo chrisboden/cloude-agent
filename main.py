@@ -28,6 +28,23 @@ agent_manager: Optional[AgentManager] = None
 _models_cache: dict = {"fetched_at": 0.0, "models": None, "error": None}
 
 
+def _is_openrouter_enabled() -> bool:
+    base_url = (os.environ.get("ANTHROPIC_BASE_URL") or "").lower().strip()
+    return "openrouter.ai" in base_url
+
+
+def _get_model_defaults() -> tuple[dict, Optional[str], str]:
+    defaults = {
+        "opus": os.environ.get("ANTHROPIC_DEFAULT_OPUS_MODEL") or "",
+        "sonnet": os.environ.get("ANTHROPIC_DEFAULT_SONNET_MODEL") or "",
+        "haiku": os.environ.get("ANTHROPIC_DEFAULT_HAIKU_MODEL") or "",
+    }
+    cleaned = {key: value for key, value in defaults.items() if value}
+    default_alias = "sonnet"
+    default_model_id = cleaned.get(default_alias)
+    return cleaned, default_model_id, default_alias
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global agent_manager
@@ -317,22 +334,98 @@ async def list_models(refresh: bool = False):
     """
     List available models for the current deployment.
 
+    If OpenRouter is configured, this queries `GET https://openrouter.ai/api/v1/models`.
     If `ANTHROPIC_API_KEY` is available, this queries `GET https://api.anthropic.com/v1/models`.
-    Otherwise returns a small fallback list that is known to work in this repo.
+    Otherwise returns a small fallback list based on defaults or known good IDs.
     """
     cache_ttl_s = 60 * 60
     now = time.time()
-    if not refresh and _models_cache.get("models") and now - float(_models_cache.get("fetched_at", 0)) < cache_ttl_s:
-        return {"models": _models_cache["models"], "source": "cache"}
+    defaults, default_model_id, default_alias = _get_model_defaults()
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
+    openrouter_enabled = _is_openrouter_enabled()
+    cache_source = _models_cache.get("source")
+    desired_source = "openrouter" if openrouter_enabled else ("anthropic" if api_key else "fallback")
+
+    if (
+        not refresh
+        and _models_cache.get("models")
+        and now - float(_models_cache.get("fetched_at", 0)) < cache_ttl_s
+        and cache_source == desired_source
+    ):
+        return {
+            "models": _models_cache["models"],
+            "source": "cache",
+            "defaults": defaults,
+            "default_model_id": default_model_id,
+            "default_model_alias": default_alias,
+        }
+
+    fallback: list[dict] = []
+    for key in ("sonnet", "opus", "haiku"):
+        model_id = defaults.get(key)
+        if model_id and model_id not in {m["id"] for m in fallback}:
+            fallback.append({"id": model_id, "display_name": model_id})
+    if not fallback:
         fallback = [
             {"id": "claude-sonnet-4-5-20250929", "display_name": "Claude Sonnet 4.5"},
             {"id": "claude-3-5-haiku-20241022", "display_name": "Claude 3.5 Haiku"},
         ]
-        _models_cache.update({"fetched_at": now, "models": fallback, "error": "ANTHROPIC_API_KEY not set"})
-        return {"models": fallback, "source": "fallback", "warning": "ANTHROPIC_API_KEY not set; returning fallback list"}
+
+    if openrouter_enabled:
+        auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        headers = {}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://openrouter.ai/api/v1/models",
+                    headers=headers or None,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            models = [
+                {"id": m.get("id"), "display_name": m.get("name") or m.get("display_name") or m.get("id")}
+                for m in (data.get("data") or [])
+                if m.get("id")
+            ]
+            _models_cache.update(
+                {"fetched_at": now, "models": models, "error": None, "source": "openrouter"}
+            )
+            return {
+                "models": models,
+                "source": "openrouter",
+                "defaults": defaults,
+                "default_model_id": default_model_id,
+                "default_model_alias": default_alias,
+            }
+        except Exception as e:
+            logger.exception("Failed to fetch models from OpenRouter")
+            _models_cache.update(
+                {"fetched_at": now, "models": fallback, "error": str(e), "source": "fallback"}
+            )
+            return {
+                "models": fallback,
+                "source": "fallback",
+                "warning": "Failed to fetch models from OpenRouter; returning fallback list",
+                "defaults": defaults,
+                "default_model_id": default_model_id,
+                "default_model_alias": default_alias,
+            }
+
+    if not api_key:
+        _models_cache.update(
+            {"fetched_at": now, "models": fallback, "error": "ANTHROPIC_API_KEY not set", "source": "fallback"}
+        )
+        return {
+            "models": fallback,
+            "source": "fallback",
+            "warning": "ANTHROPIC_API_KEY not set; returning fallback list",
+            "defaults": defaults,
+            "default_model_id": default_model_id,
+            "default_model_alias": default_alias,
+        }
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -351,16 +444,29 @@ async def list_models(refresh: bool = False):
             for m in (data.get("data") or [])
             if m.get("id")
         ]
-        _models_cache.update({"fetched_at": now, "models": models, "error": None})
-        return {"models": models, "source": "anthropic"}
+        _models_cache.update(
+            {"fetched_at": now, "models": models, "error": None, "source": "anthropic"}
+        )
+        return {
+            "models": models,
+            "source": "anthropic",
+            "defaults": defaults,
+            "default_model_id": default_model_id,
+            "default_model_alias": default_alias,
+        }
     except Exception as e:
-        fallback = [
-            {"id": "claude-sonnet-4-5-20250929", "display_name": "Claude Sonnet 4.5"},
-            {"id": "claude-3-5-haiku-20241022", "display_name": "Claude 3.5 Haiku"},
-        ]
         logger.exception("Failed to fetch models from Anthropic")
-        _models_cache.update({"fetched_at": now, "models": fallback, "error": str(e)})
-        return {"models": fallback, "source": "fallback", "warning": "Failed to fetch models from Anthropic; returning fallback list"}
+        _models_cache.update(
+            {"fetched_at": now, "models": fallback, "error": str(e), "source": "fallback"}
+        )
+        return {
+            "models": fallback,
+            "source": "fallback",
+            "warning": "Failed to fetch models from Anthropic; returning fallback list",
+            "defaults": defaults,
+            "default_model_id": default_model_id,
+            "default_model_alias": default_alias,
+        }
 
 
 @app.get("/health")
