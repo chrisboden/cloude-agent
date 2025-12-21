@@ -8,7 +8,18 @@
       "Write(./**)",
       "Edit(./**)",
       "Bash(./.claude/scripts/*)",
-      "Bash(./.claude/skills/*/scripts/*)"
+      "Bash(bash .claude/skills/)",
+      "Bash(bash /app/workspace/.claude/skills/)",
+      "Bash(bash scripts/*)",
+      "Bash(mkdir -p /app/workspace/*)",
+      "Bash(npm install*)",
+      "Bash(npm run build)",
+      "Bash(cd /app/workspace/* && npm install*)",
+      "Bash(chmod +x /app/workspace/*)",
+      "Bash(bash bundle.sh)",
+      "Bash(cd /app/workspace/* && bash bundle.sh)",
+      "Bash(bash simple-bundle.sh)",
+      "Bash(cd /app/workspace/* && bash simple-bundle.sh)"
     ],
     "deny": [
       "Read(./.env)",

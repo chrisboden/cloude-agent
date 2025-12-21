@@ -42,6 +42,8 @@ TODO.md
 /projects
 /.claude/skills/*
 /.claude/commands/*
+/scripts/
+/session-debug/
 CLAUDE.md
 AGENTS.md
 

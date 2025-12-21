@@ -126,6 +126,10 @@ class ChatRequest(BaseModel):
     model: Optional[str] = Field(default=None, description="Model to use")
 
 
+class ChatInterruptRequest(BaseModel):
+    session_id: str = Field(..., description="Session identifier to interrupt")
+
+
 class ChatResponse(BaseModel):
     session_id: str
     response: str
@@ -594,6 +598,20 @@ async def chat_stream(req: ChatRequest):
             "Connection": "keep-alive",
         }
     )
+
+
+@app.post("/chat/interrupt", dependencies=[Depends(verify_api_key)])
+async def chat_interrupt(req: ChatInterruptRequest):
+    if not agent_manager:
+        raise HTTPException(status_code=503, detail="Agent manager not initialized")
+    try:
+        interrupted = await agent_manager.interrupt_stream(req.session_id)
+    except Exception:
+        logger.exception("Failed to interrupt session %s", req.session_id)
+        raise HTTPException(status_code=500, detail="Failed to interrupt session")
+    if not interrupted:
+        raise HTTPException(status_code=404, detail="No active stream for session")
+    return {"status": "interrupted", "session_id": req.session_id}
 
 
 @app.get("/models", dependencies=[Depends(verify_api_key)])
@@ -1117,6 +1135,7 @@ async def root():
         "endpoints": {
             "POST /chat": "Send message to agent (supports `command` param for slash commands)",
             "POST /chat/stream": "Stream response from agent (SSE)",
+            "POST /chat/interrupt": "Interrupt an active streaming session",
             "GET /commands": "List available commands",
             "GET /commands/{id}": "Get command template",
             "POST /commands": "Create/update a command",

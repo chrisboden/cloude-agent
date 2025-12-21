@@ -6,6 +6,7 @@ It provides methods for:
 - Managing skills and commands
 - Managing workspace files
 """
+import asyncio
 import json
 import os
 import logging
@@ -19,7 +20,7 @@ import io
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
-from claude_code_sdk import ClaudeCodeOptions, query
+from claude_code_sdk import ClaudeCodeOptions, ClaudeSDKClient, query
 from claude_code_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock, SystemMessage, UserMessage
 import redis.asyncio as redis
 
@@ -80,6 +81,13 @@ def _format_query_error(*, stderr_text: str, exc: Exception) -> RuntimeError:
         return RuntimeError(stderr_text)
     return RuntimeError(str(exc))
 
+
+class _StreamError(RuntimeError):
+    def __init__(self, *, stderr_text: str, exc: Exception, emitted_any_output: bool):
+        super().__init__(str(exc))
+        self.stderr_text = (stderr_text or "").strip()
+        self.emitted_any_output = emitted_any_output
+
 def _normalize_identifier(raw: str, *, kind: str) -> str:
     value = (raw or "").strip().lower()
     if not value or not _IDENTIFIER_RE.fullmatch(value):
@@ -117,6 +125,8 @@ class AgentManager:
     def __init__(self, redis_url: str):
         self.redis = redis.from_url(redis_url)
         self.conversation_histories: dict[str, list[dict]] = {}
+        self._active_streams: dict[str, ClaudeSDKClient] = {}
+        self._active_streams_lock = asyncio.Lock()
         # Ensure skills and commands directories exist
         SKILLS_DIR.mkdir(parents=True, exist_ok=True)
         COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
@@ -194,6 +204,27 @@ class AgentManager:
         if len(content) > max_chars:
             content = content[:max_chars] + "\n\n[...truncated...]"
         return content
+
+    async def _register_active_stream(self, user_session_id: str, client: ClaudeSDKClient) -> None:
+        async with self._active_streams_lock:
+            self._active_streams[user_session_id] = client
+
+    async def _unregister_active_stream(self, user_session_id: str, client: ClaudeSDKClient) -> None:
+        async with self._active_streams_lock:
+            if self._active_streams.get(user_session_id) is client:
+                self._active_streams.pop(user_session_id, None)
+
+    async def interrupt_stream(self, user_session_id: str) -> bool:
+        async with self._active_streams_lock:
+            client = self._active_streams.get(user_session_id)
+        if not client:
+            return False
+        try:
+            await client.interrupt()
+        except Exception:
+            logger.exception("Failed to interrupt session %s", user_session_id)
+            return False
+        return True
 
     async def _get_stored_session(self, user_session_id: str) -> Optional[dict]:
         data = await self.redis.get(f"session:{user_session_id}")
@@ -454,19 +485,20 @@ class AgentManager:
         yield {"type": "status", "status": "processing"}
 
         # query() enables Claude Code preprocessing for slash commands and !` bash execution.
-        prompt: str | Any
-        if images:
-            async def message_generator():
-                yield {
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": content
+        def build_prompt() -> str | Any:
+            if images:
+                async def message_generator():
+                    yield {
+                        "type": "user",
+                        "message": {
+                            "role": "user",
+                            "content": content
+                        }
                     }
-                }
-            prompt = message_generator()
-        else:
-            prompt = text_content
+                return message_generator()
+            return text_content
+
+        stream_session_id = resume_session_id or user_session_id
 
         async def run_stream(current_options: ClaudeCodeOptions):
             nonlocal claude_session_id, usage
@@ -478,8 +510,12 @@ class AgentManager:
                 model=(current_options.model or None),
             )
             emitted_any_output = False
+            client = ClaudeSDKClient(opts)
             try:
-                async for msg in query(prompt=prompt, options=opts):
+                await client.connect()
+                await self._register_active_stream(user_session_id, client)
+                await client.query(prompt=build_prompt(), session_id=stream_session_id)
+                async for msg in client.receive_response():
                     if isinstance(msg, SystemMessage):
                         if msg.subtype == "init":
                             claude_session_id = msg.data.get("session_id") or claude_session_id
@@ -502,22 +538,33 @@ class AgentManager:
                         usage = msg.usage or {"num_turns": msg.num_turns}
                         if usage.get("num_turns") is None:
                             usage["num_turns"] = msg.num_turns
-            except Exception as e:
-                stderr_text = stderr_buf.getvalue()
-                if not emitted_any_output and current_options.model:
-                    fallback_options = dataclasses.replace(current_options, model=None)
-                    async for ev in run_stream(fallback_options):
-                        yield ev
-                    return
-                if stderr_text.strip():
-                    raise RuntimeError(stderr_text.strip()) from e
+            except asyncio.CancelledError:
                 raise
+            except Exception as e:
+                raise _StreamError(
+                    stderr_text=stderr_buf.getvalue(),
+                    exc=e,
+                    emitted_any_output=emitted_any_output,
+                ) from e
+            finally:
+                await self._unregister_active_stream(user_session_id, client)
+                await client.disconnect()
 
         claude_session_id: Optional[str] = None
         usage: dict[str, Any] = {}
 
-        async for ev in run_stream(options):
-            yield ev
+        try:
+            async for ev in run_stream(options):
+                yield ev
+        except _StreamError as e:
+            if options.model and not e.emitted_any_output:
+                fallback_options = dataclasses.replace(options, model=None)
+                async for ev in run_stream(fallback_options):
+                    yield ev
+            else:
+                if e.stderr_text:
+                    raise RuntimeError(e.stderr_text) from e
+                raise
         
         response_text = "".join(response_parts)
         
@@ -1009,4 +1056,10 @@ class AgentManager:
             return None
 
     async def close(self):
+        for client in list(self._active_streams.values()):
+            try:
+                await client.disconnect()
+            except Exception:
+                logger.exception("Failed to disconnect active stream client")
+        self._active_streams.clear()
         await self.redis.close()

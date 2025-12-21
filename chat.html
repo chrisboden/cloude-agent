@@ -1170,6 +1170,30 @@
             background: var(--bg-tertiary);
         }
 
+        .stop-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 9px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+
+        .stop-btn:hover:not(:disabled) {
+            color: var(--error);
+            border-color: rgba(248, 113, 113, 0.6);
+            background: rgba(248, 113, 113, 0.12);
+        }
+
+        .stop-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
         .send-btn {
             background: var(--accent);
             border: none;
@@ -1924,6 +1948,11 @@
                                             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
                                         </svg>
                                     </button>
+                                    <button class="stop-btn" id="stopBtn" onclick="stopStreaming()" title="Stop response" disabled>
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+                                        </svg>
+                                    </button>
                                     <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>
                                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -2185,6 +2214,10 @@ Instructions for Claude on how to use this skill..."></textarea>
             let currentSessionId = null;
             let attachedFiles = [];
             let isLoading = false;
+            let isStopping = false;
+            let currentStreamController = null;
+            let currentStreamReader = null;
+            let currentStreamSessionId = null;
             const messageMarkdown = {};
             let skillsContentTemplate = null;
 
@@ -2316,10 +2349,14 @@ Instructions for Claude on how to use this skill..."></textarea>
         function updateSendButton() {
             const input = document.getElementById('messageInput');
             const sendBtn = document.getElementById('sendBtn');
+            const stopBtn = document.getElementById('stopBtn');
             const hasContent = input.value.trim() || attachedFiles.length > 0;
             const hasApiKey = document.getElementById('apiKey').value.trim();
             const hasApiUrl = API_URL.trim();
             sendBtn.disabled = !hasContent || !hasApiKey || !hasApiUrl || isLoading;
+            if (stopBtn) {
+                stopBtn.disabled = !isLoading || isStopping;
+            }
         }
 
         // API URL management
@@ -5230,6 +5267,42 @@ Instructions for Claude on how to use this skill..."></textarea>
             updateSendButton();
         }
 
+        async function interruptSession(sessionId) {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            if (!apiKey || !API_URL || !sessionId) return;
+            try {
+                await fetch(`${API_URL}/chat/interrupt`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': apiKey
+                    },
+                    body: JSON.stringify({ session_id: sessionId })
+                });
+            } catch (error) {
+                console.warn('Failed to interrupt session:', error);
+            }
+        }
+
+        async function stopStreaming() {
+            if (!isLoading || isStopping) return;
+            isStopping = true;
+            updateSendButton();
+            if (currentStreamController) {
+                currentStreamController.abort();
+            }
+            if (currentStreamReader) {
+                try {
+                    await currentStreamReader.cancel();
+                } catch (error) {
+                    console.warn('Failed to cancel stream reader:', error);
+                }
+            }
+            if (currentStreamSessionId) {
+                interruptSession(currentStreamSessionId);
+            }
+        }
+
         // Send message
         async function sendMessage() {
             const input = document.getElementById('messageInput');
@@ -5265,6 +5338,10 @@ Instructions for Claude on how to use this skill..."></textarea>
             if (!currentSessionId) {
                 currentSessionId = 'chat-' + Date.now();
             }
+            currentStreamSessionId = currentSessionId;
+            isStopping = false;
+            currentStreamController = new AbortController();
+            currentStreamReader = null;
 
             // Clear input and files
             input.value = '';
@@ -5305,6 +5382,11 @@ Instructions for Claude on how to use this skill..."></textarea>
             updateSendButton();
 
             const selectedModel = getSelectedModel();
+            let assistantMsgId = null;
+            let contentEl = null;
+            let toolsEl = null;
+            let fullResponse = '';
+            let toolsUsed = [];
 
             // Prepare images array for API
             const images = imageFiles.map(f => {
@@ -5347,7 +5429,8 @@ Instructions for Claude on how to use this skill..."></textarea>
                         'Content-Type': 'application/json',
                         'X-API-Key': apiKey
                     },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify(requestBody),
+                    signal: currentStreamController.signal
                 });
 
                 if (!response.ok) {
@@ -5357,7 +5440,7 @@ Instructions for Claude on how to use this skill..."></textarea>
 
                 // Remove loading indicator and add empty assistant message
                 document.getElementById(loadingId)?.remove();
-                const assistantMsgId = 'assistant-' + Date.now();
+                assistantMsgId = 'assistant-' + Date.now();
                 messageMarkdown[assistantMsgId] = '';
                 const modelBadgeLabel = getModelBadgeLabel(selectedModel);
                 messagesEl.innerHTML += `
@@ -5374,10 +5457,10 @@ Instructions for Claude on how to use this skill..."></textarea>
                     </div>
                 `;
                 
-                const contentEl = document.getElementById(`${assistantMsgId}-content`);
-                const toolsEl = document.getElementById(`${assistantMsgId}-tools`);
-                let fullResponse = '';
-                let toolsUsed = [];
+                contentEl = document.getElementById(`${assistantMsgId}-content`);
+                toolsEl = document.getElementById(`${assistantMsgId}-tools`);
+                fullResponse = '';
+                toolsUsed = [];
                 let currentStatus = '';
                 let pendingPlaceholder = '';
                 let sawToolActivity = false;
@@ -5395,6 +5478,7 @@ Instructions for Claude on how to use this skill..."></textarea>
 
                 // Read SSE stream
                 const reader = response.body.getReader();
+                currentStreamReader = reader;
                 const decoder = new TextDecoder();
                 let buffer = '';
 
@@ -5487,14 +5571,52 @@ Instructions for Claude on how to use this skill..."></textarea>
                 }
             } catch (error) {
                 document.getElementById(loadingId)?.remove();
-                messagesEl.innerHTML += renderMessage({ 
-                    role: 'assistant', 
-                    content: `Error: ${error.message}`,
-                    isError: true
-                });
+                const isAbort = isStopping || error.name === 'AbortError';
+                if (isAbort) {
+                    if (assistantMsgId) {
+                        if (!fullResponse.trim() && contentEl) {
+                            contentEl.innerHTML = '<div class="status-indicator">Stopped.</div>';
+                        }
+                        if (currentSessionId) {
+                            const storedResponse = fullResponse.trim() ? fullResponse : 'Stopped.';
+                            messageMarkdown[assistantMsgId] = storedResponse;
+                            const msgEl = document.getElementById(assistantMsgId);
+                            if (msgEl) {
+                                msgEl.dataset.markdown = encodeURIComponent(storedResponse);
+                            }
+                            updateChatInStorage(currentSessionId, message, { 
+                                response: storedResponse, 
+                                tools_used: toolsUsed,
+                                model: selectedModel 
+                            });
+                        }
+                    } else {
+                        messagesEl.innerHTML += renderMessage({ 
+                            role: 'assistant', 
+                            content: 'Stopped.'
+                        });
+                        if (currentSessionId) {
+                            updateChatInStorage(currentSessionId, message, { 
+                                response: 'Stopped.', 
+                                tools_used: [],
+                                model: selectedModel 
+                            });
+                        }
+                    }
+                } else {
+                    messagesEl.innerHTML += renderMessage({ 
+                        role: 'assistant', 
+                        content: `Error: ${error.message}`,
+                        isError: true
+                    });
+                }
             }
 
             isLoading = false;
+            isStopping = false;
+            currentStreamController = null;
+            currentStreamReader = null;
+            currentStreamSessionId = null;
             updateSendButton();
             scrollToBottom();
         }
