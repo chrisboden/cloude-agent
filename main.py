@@ -6,7 +6,8 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse, FileResponse
+from fastapi.responses import Response, StreamingResponse, FileResponse, RedirectResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 from typing import Optional
 from agent_manager import AgentManager, WORKSPACE_DIR
@@ -18,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 API_KEY = os.environ.get("API_KEY")
 ALLOW_BYPASS_PERMISSIONS = os.environ.get("ALLOW_BYPASS_PERMISSIONS", "0") == "1"
+CLAUDE_MEM_ENABLED = os.environ.get("CLAUDE_MEM_ENABLED", "1") == "1"
+CLAUDE_MEM_WORKER_HOST = os.environ.get("CLAUDE_MEM_WORKER_HOST", "127.0.0.1")
+CLAUDE_MEM_WORKER_PORT = int(os.environ.get("CLAUDE_MEM_WORKER_PORT", "37777"))
+CLAUDE_MEM_PROXY_PUBLIC = os.environ.get("CLAUDE_MEM_PROXY_PUBLIC", "0") == "1"
 
 if not API_KEY:
     raise RuntimeError("API_KEY is required.")
@@ -26,6 +31,34 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
 agent_manager: Optional[AgentManager] = None
 _models_cache: dict = {"fetched_at": 0.0, "models": None, "error": None}
+_CLAUDE_MEM_PROXY_COOKIE = "claude_mem_proxy_key"
+_HOP_BY_HOP_HEADERS = {
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+}
+
+
+def _is_openrouter_enabled() -> bool:
+    base_url = (os.environ.get("ANTHROPIC_BASE_URL") or "").lower().strip()
+    return "openrouter.ai" in base_url
+
+
+def _get_model_defaults() -> tuple[dict, Optional[str], str]:
+    defaults = {
+        "opus": os.environ.get("ANTHROPIC_DEFAULT_OPUS_MODEL") or "",
+        "sonnet": os.environ.get("ANTHROPIC_DEFAULT_SONNET_MODEL") or "",
+        "haiku": os.environ.get("ANTHROPIC_DEFAULT_HAIKU_MODEL") or "",
+    }
+    cleaned = {key: value for key, value in defaults.items() if value}
+    default_alias = "sonnet"
+    default_model_id = cleaned.get(default_alias)
+    return cleaned, default_model_id, default_alias
 
 
 @asynccontextmanager
@@ -69,6 +102,89 @@ async def verify_api_key_webhook(
     key = x_api_key or api_key
     if not key or key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+def _claude_mem_base_url() -> str:
+    return f"http://{CLAUDE_MEM_WORKER_HOST}:{CLAUDE_MEM_WORKER_PORT}"
+
+
+def _claude_mem_proxy_allowed(request: Request) -> tuple[bool, bool]:
+    if CLAUDE_MEM_PROXY_PUBLIC:
+        return True, False
+    header_key = request.headers.get("X-API-Key")
+    if header_key and header_key == API_KEY:
+        return True, False
+    query_key = request.query_params.get("api_key")
+    if query_key and query_key == API_KEY:
+        return True, True
+    cookie_key = request.cookies.get(_CLAUDE_MEM_PROXY_COOKIE)
+    if cookie_key and cookie_key == API_KEY:
+        return True, False
+    return False, False
+
+
+async def _close_proxy_response(response: httpx.Response, client: httpx.AsyncClient) -> None:
+    await response.aclose()
+    await client.aclose()
+
+
+async def _proxy_claude_mem(request: Request, upstream_path: str) -> Response:
+    if not CLAUDE_MEM_ENABLED:
+        raise HTTPException(status_code=404, detail="Claude-Mem is disabled")
+
+    allowed, set_cookie = _claude_mem_proxy_allowed(request)
+    if not allowed:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    params = [(key, value) for key, value in request.query_params.multi_items() if key != "api_key"]
+    forward_headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in _HOP_BY_HOP_HEADERS
+        and key.lower() not in {"host", "content-length", "x-api-key", "cookie"}
+    }
+    body = await request.body()
+
+    base_url = _claude_mem_base_url().rstrip("/")
+    path = "/" + upstream_path.lstrip("/")
+    url = f"{base_url}{path}"
+
+    client = httpx.AsyncClient(timeout=None)
+    try:
+        upstream_request = client.build_request(
+            request.method,
+            url,
+            params=params or None,
+            headers=forward_headers,
+            content=body if body else None,
+        )
+        upstream_response = await client.send(upstream_request, stream=True)
+    except httpx.RequestError:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="Claude-Mem worker unavailable")
+
+    response_headers = {
+        key: value
+        for key, value in upstream_response.headers.items()
+        if key.lower() not in _HOP_BY_HOP_HEADERS and key.lower() != "content-length"
+    }
+    proxy_response = StreamingResponse(
+        upstream_response.aiter_raw(),
+        status_code=upstream_response.status_code,
+        headers=response_headers,
+        media_type=upstream_response.headers.get("content-type"),
+        background=BackgroundTask(_close_proxy_response, upstream_response, client),
+    )
+    if set_cookie:
+        proxy_response.set_cookie(
+            _CLAUDE_MEM_PROXY_COOKIE,
+            API_KEY,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+            path="/",
+        )
+    return proxy_response
 
 
 class ChatContext(BaseModel):
@@ -312,27 +428,129 @@ async def chat_stream(req: ChatRequest):
     )
 
 
+@app.get("/claude-mem")
+async def claude_mem_redirect():
+    return RedirectResponse(url="/claude-mem/")
+
+
+@app.api_route(
+    "/claude-mem/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+async def claude_mem_proxy(request: Request, path: str):
+    return await _proxy_claude_mem(request, path)
+
+
+@app.api_route(
+    "/api/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+async def claude_mem_api_proxy(request: Request, path: str):
+    return await _proxy_claude_mem(request, f"api/{path}")
+
+
+@app.api_route("/stream", methods=["GET", "HEAD"])
+async def claude_mem_stream(request: Request):
+    return await _proxy_claude_mem(request, "stream")
+
+
 @app.get("/models", dependencies=[Depends(verify_api_key)])
 async def list_models(refresh: bool = False):
     """
     List available models for the current deployment.
 
+    If OpenRouter is configured, this queries `GET https://openrouter.ai/api/v1/models`.
     If `ANTHROPIC_API_KEY` is available, this queries `GET https://api.anthropic.com/v1/models`.
-    Otherwise returns a small fallback list that is known to work in this repo.
+    Otherwise returns a small fallback list based on defaults or known good IDs.
     """
     cache_ttl_s = 60 * 60
     now = time.time()
-    if not refresh and _models_cache.get("models") and now - float(_models_cache.get("fetched_at", 0)) < cache_ttl_s:
-        return {"models": _models_cache["models"], "source": "cache"}
+    defaults, default_model_id, default_alias = _get_model_defaults()
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
+    openrouter_enabled = _is_openrouter_enabled()
+    cache_source = _models_cache.get("source")
+    desired_source = "openrouter" if openrouter_enabled else ("anthropic" if api_key else "fallback")
+
+    if (
+        not refresh
+        and _models_cache.get("models")
+        and now - float(_models_cache.get("fetched_at", 0)) < cache_ttl_s
+        and cache_source == desired_source
+    ):
+        return {
+            "models": _models_cache["models"],
+            "source": "cache",
+            "defaults": defaults,
+            "default_model_id": default_model_id,
+            "default_model_alias": default_alias,
+        }
+
+    fallback: list[dict] = []
+    for key in ("sonnet", "opus", "haiku"):
+        model_id = defaults.get(key)
+        if model_id and model_id not in {m["id"] for m in fallback}:
+            fallback.append({"id": model_id, "display_name": model_id})
+    if not fallback:
         fallback = [
             {"id": "claude-sonnet-4-5-20250929", "display_name": "Claude Sonnet 4.5"},
             {"id": "claude-3-5-haiku-20241022", "display_name": "Claude 3.5 Haiku"},
         ]
-        _models_cache.update({"fetched_at": now, "models": fallback, "error": "ANTHROPIC_API_KEY not set"})
-        return {"models": fallback, "source": "fallback", "warning": "ANTHROPIC_API_KEY not set; returning fallback list"}
+
+    if openrouter_enabled:
+        auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        headers = {}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://openrouter.ai/api/v1/models",
+                    headers=headers or None,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+            models = [
+                {"id": m.get("id"), "display_name": m.get("name") or m.get("display_name") or m.get("id")}
+                for m in (data.get("data") or [])
+                if m.get("id")
+            ]
+            _models_cache.update(
+                {"fetched_at": now, "models": models, "error": None, "source": "openrouter"}
+            )
+            return {
+                "models": models,
+                "source": "openrouter",
+                "defaults": defaults,
+                "default_model_id": default_model_id,
+                "default_model_alias": default_alias,
+            }
+        except Exception as e:
+            logger.exception("Failed to fetch models from OpenRouter")
+            _models_cache.update(
+                {"fetched_at": now, "models": fallback, "error": str(e), "source": "fallback"}
+            )
+            return {
+                "models": fallback,
+                "source": "fallback",
+                "warning": "Failed to fetch models from OpenRouter; returning fallback list",
+                "defaults": defaults,
+                "default_model_id": default_model_id,
+                "default_model_alias": default_alias,
+            }
+
+    if not api_key:
+        _models_cache.update(
+            {"fetched_at": now, "models": fallback, "error": "ANTHROPIC_API_KEY not set", "source": "fallback"}
+        )
+        return {
+            "models": fallback,
+            "source": "fallback",
+            "warning": "ANTHROPIC_API_KEY not set; returning fallback list",
+            "defaults": defaults,
+            "default_model_id": default_model_id,
+            "default_model_alias": default_alias,
+        }
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -351,16 +569,29 @@ async def list_models(refresh: bool = False):
             for m in (data.get("data") or [])
             if m.get("id")
         ]
-        _models_cache.update({"fetched_at": now, "models": models, "error": None})
-        return {"models": models, "source": "anthropic"}
+        _models_cache.update(
+            {"fetched_at": now, "models": models, "error": None, "source": "anthropic"}
+        )
+        return {
+            "models": models,
+            "source": "anthropic",
+            "defaults": defaults,
+            "default_model_id": default_model_id,
+            "default_model_alias": default_alias,
+        }
     except Exception as e:
-        fallback = [
-            {"id": "claude-sonnet-4-5-20250929", "display_name": "Claude Sonnet 4.5"},
-            {"id": "claude-3-5-haiku-20241022", "display_name": "Claude 3.5 Haiku"},
-        ]
         logger.exception("Failed to fetch models from Anthropic")
-        _models_cache.update({"fetched_at": now, "models": fallback, "error": str(e)})
-        return {"models": fallback, "source": "fallback", "warning": "Failed to fetch models from Anthropic; returning fallback list"}
+        _models_cache.update(
+            {"fetched_at": now, "models": fallback, "error": str(e), "source": "fallback"}
+        )
+        return {
+            "models": fallback,
+            "source": "fallback",
+            "warning": "Failed to fetch models from Anthropic; returning fallback list",
+            "defaults": defaults,
+            "default_model_id": default_model_id,
+            "default_model_alias": default_alias,
+        }
 
 
 @app.get("/health")
@@ -744,6 +975,9 @@ async def root():
         "endpoints": {
             "POST /chat": "Send message to agent (supports `command` param for slash commands)",
             "POST /chat/stream": "Stream response from agent (SSE)",
+            "GET /claude-mem": "Claude-Mem viewer UI (proxy)",
+            "GET /api/{path}": "Claude-Mem API proxy",
+            "GET /stream": "Claude-Mem SSE stream proxy",
             "GET /commands": "List available commands",
             "GET /commands/{id}": "Get command template",
             "POST /commands": "Create/update a command",

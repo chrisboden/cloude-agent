@@ -2,7 +2,6 @@
 allowed-tools: Bash(cat:*), Bash(echo:*), Bash(mkdir:*), Bash(date:*), Bash(python3:*), Read(./artifacts/**), Write(./artifacts/**), Edit(./artifacts/**), WebFetch(domain:*), Skill(*), SlashCommand(*)
 description: Process voice transcripts - classify and route to appropriate handler
 argument-hint: [transcript]
-model: claude-sonnet-4-5-20250929
 ---
 
 # Voice Transcript Router

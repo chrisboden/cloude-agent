@@ -2,7 +2,6 @@
 allowed-tools: Bash(mkdir:*), Bash(date:*), Write(./artifacts/**), Edit(./artifacts/**)
 description: Clean up and save a personal note or brain dump
 argument-hint: [raw transcript]
-model: claude-sonnet-4-5-20250929
 ---
 
 # Process Personal Note
