@@ -74,6 +74,7 @@ _WEBHOOK_REQUIRED_ALLOW_RULES: list[str] = [
     "Bash(python3 ./.claude/scripts/*:*)",
     "Bash(python3 .claude/scripts/*:*)",
 ]
+_INTERRUPT_TTL_S = 86400 * 7
 
 def _format_query_error(*, stderr_text: str, exc: Exception) -> RuntimeError:
     stderr_text = (stderr_text or "").strip()
@@ -224,6 +225,10 @@ class AgentManager:
         except Exception:
             logger.exception("Failed to interrupt session %s", user_session_id)
             return False
+        try:
+            await self._mark_interrupted(user_session_id)
+        except Exception:
+            logger.exception("Failed to record interrupt for session %s", user_session_id)
         return True
 
     async def _get_stored_session(self, user_session_id: str) -> Optional[dict]:
@@ -231,6 +236,17 @@ class AgentManager:
         if data:
             return json.loads(data)
         return None
+
+    async def _mark_interrupted(self, user_session_id: str) -> None:
+        await self.redis.set(f"interrupt:{user_session_id}", "1", ex=_INTERRUPT_TTL_S)
+
+    async def _consume_interrupt_note(self, user_session_id: str) -> Optional[str]:
+        key = f"interrupt:{user_session_id}"
+        data = await self.redis.get(key)
+        if not data:
+            return None
+        await self.redis.delete(key)
+        return "Note: The previous response was interrupted by the user."
     
     async def _store_session(
         self,
@@ -341,15 +357,18 @@ class AgentManager:
         if (context or {}).get("source") == "webhook":
             settings = self._build_webhook_settings()
         
+        interrupt_note = await self._consume_interrupt_note(user_session_id)
         # Set working directory to workspace for file operations and for discovering .claude/commands/ etc.
         project_context = self._load_project_context()
+        append_system_prompt_parts = [part for part in (project_context, interrupt_note) if part]
+        append_system_prompt = "\n\n".join(append_system_prompt_parts) if append_system_prompt_parts else None
         options = ClaudeCodeOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
             model=(model or None),
             resume=resume_session_id,
             settings=settings,
-            append_system_prompt=project_context,
+            append_system_prompt=append_system_prompt,
         )
         
         # query() enables Claude Code preprocessing for slash commands and !` bash execution.
@@ -467,15 +486,18 @@ class AgentManager:
         if (context or {}).get("source") == "webhook":
             settings = self._build_webhook_settings()
         
+        interrupt_note = await self._consume_interrupt_note(user_session_id)
         # Set working directory to workspace for file operations and for discovering .claude/commands/ etc.
         project_context = self._load_project_context()
+        append_system_prompt_parts = [part for part in (project_context, interrupt_note) if part]
+        append_system_prompt = "\n\n".join(append_system_prompt_parts) if append_system_prompt_parts else None
         options = ClaudeCodeOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
             model=(model or None),
             resume=resume_session_id,
             settings=settings,
-            append_system_prompt=project_context,
+            append_system_prompt=append_system_prompt,
         )
         
         # Signal that we're starting
@@ -501,7 +523,7 @@ class AgentManager:
         stream_session_id = resume_session_id or user_session_id
 
         async def run_stream(current_options: ClaudeCodeOptions):
-            nonlocal claude_session_id, usage
+            nonlocal claude_session_id, usage, session_stored
 
             stderr_buf = io.StringIO()
             opts = dataclasses.replace(
@@ -519,6 +541,10 @@ class AgentManager:
                     if isinstance(msg, SystemMessage):
                         if msg.subtype == "init":
                             claude_session_id = msg.data.get("session_id") or claude_session_id
+                            if claude_session_id and not session_stored:
+                                await self._store_session(user_session_id, claude_session_id=claude_session_id)
+                                await self._update_session_activity(user_session_id)
+                                session_stored = True
                             yield {"type": "status", "status": "ready"}
                     elif isinstance(msg, AssistantMessage):
                         for block in msg.content:
@@ -552,6 +578,7 @@ class AgentManager:
 
         claude_session_id: Optional[str] = None
         usage: dict[str, Any] = {}
+        session_stored = False
 
         try:
             async for ev in run_stream(options):

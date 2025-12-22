@@ -5387,6 +5387,16 @@ Instructions for Claude on how to use this skill..."></textarea>
             let toolsEl = null;
             let fullResponse = '';
             let toolsUsed = [];
+            let didPersistChat = false;
+            const persistChatOnce = (responseText, toolList = toolsUsed) => {
+                if (didPersistChat || !currentSessionId) return;
+                didPersistChat = true;
+                updateChatInStorage(currentSessionId, message, { 
+                    response: responseText, 
+                    tools_used: toolList,
+                    model: selectedModel 
+                });
+            };
 
             // Prepare images array for API
             const images = imageFiles.map(f => {
@@ -5551,17 +5561,17 @@ Instructions for Claude on how to use this skill..."></textarea>
                                             contentEl.innerHTML = '<div class="status-indicator">✅ Tool run completed.</div>';
                                         }
                                     }
-                                    updateChatInStorage(currentSessionId, message, { 
-                                        response: fullResponse, 
-                                        tools_used: toolsUsed,
-                                        model: selectedModel 
-                                    });
+                                    persistChatOnce(fullResponse, toolsUsed);
                                     // Refresh explorer tab if it's open (files may have changed)
                                     if (document.getElementById('artifactsModal').classList.contains('active')) {
                                         refreshCurrentTab();
                                     }
                                 } else if (event.type === 'error') {
-                                    contentEl.innerHTML = formatContent(`Error: ${event.error}`);
+                                    const errorText = fullResponse.trim()
+                                        ? `${fullResponse}\n\nError: ${event.error || 'Unknown error'}`
+                                        : `Error: ${event.error || 'Unknown error'}`;
+                                    contentEl.innerHTML = formatContent(errorText);
+                                    persistChatOnce(errorText, toolsUsed);
                                 }
                             } catch (e) {
                                 console.error('Failed to parse SSE event:', e);
@@ -5584,11 +5594,7 @@ Instructions for Claude on how to use this skill..."></textarea>
                             if (msgEl) {
                                 msgEl.dataset.markdown = encodeURIComponent(storedResponse);
                             }
-                            updateChatInStorage(currentSessionId, message, { 
-                                response: storedResponse, 
-                                tools_used: toolsUsed,
-                                model: selectedModel 
-                            });
+                            persistChatOnce(storedResponse, toolsUsed);
                         }
                     } else {
                         messagesEl.innerHTML += renderMessage({ 
@@ -5596,11 +5602,7 @@ Instructions for Claude on how to use this skill..."></textarea>
                             content: 'Stopped.'
                         });
                         if (currentSessionId) {
-                            updateChatInStorage(currentSessionId, message, { 
-                                response: 'Stopped.', 
-                                tools_used: [],
-                                model: selectedModel 
-                            });
+                            persistChatOnce('Stopped.', []);
                         }
                     }
                 } else {
@@ -5609,6 +5611,10 @@ Instructions for Claude on how to use this skill..."></textarea>
                         content: `Error: ${error.message}`,
                         isError: true
                     });
+                    const errorText = fullResponse.trim()
+                        ? `${fullResponse}\n\nError: ${error.message}`
+                        : `Error: ${error.message}`;
+                    persistChatOnce(errorText, toolsUsed);
                 }
             }
 
