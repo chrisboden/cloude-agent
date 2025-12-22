@@ -3,14 +3,19 @@ import json
 import time
 import logging
 import asyncio
+import base64
+import hashlib
+import hmac
+import secrets
 from collections import deque
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse, FileResponse
+from fastapi.responses import Response, StreamingResponse, FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
+from urllib.parse import urlparse
 from agent_manager import AgentManager, WORKSPACE_DIR
 import httpx
 from openai import OpenAI, InvalidWebhookSignatureError
@@ -36,6 +41,27 @@ REALTIME_GREETING = os.environ.get(
     "OPENAI_REALTIME_GREETING",
     "Hello, you're speaking with Cloude. How can I help?"
 )
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+OPENROUTER_REFERER = os.environ.get("OPENROUTER_REFERER")
+OPENROUTER_APP_TITLE = os.environ.get("OPENROUTER_APP_TITLE", "Cloude Artifacts")
+ARTIFACTS_LLM_SECRET = os.environ.get("ARTIFACTS_LLM_SECRET", API_KEY)
+ARTIFACTS_LLM_SESSION_TTL_S = int(os.environ.get("ARTIFACTS_LLM_SESSION_TTL_S", "900"))
+ARTIFACTS_LLM_COOKIE_NAME = os.environ.get("ARTIFACTS_LLM_COOKIE_NAME", "artifact_session")
+ARTIFACTS_LLM_SECURE_COOKIE = os.environ.get("ARTIFACTS_LLM_SECURE_COOKIE", "1") == "1"
+ARTIFACTS_LLM_RATE_LIMIT_PER_MIN = int(os.environ.get("ARTIFACTS_LLM_RATE_LIMIT_PER_MIN", "60"))
+ARTIFACTS_LLM_DEFAULT_MODEL = os.environ.get("ARTIFACTS_LLM_DEFAULT_MODEL", "openai/gpt-4.1-mini")
+ARTIFACTS_LLM_ALLOWED_MODELS = [
+    value.strip()
+    for value in os.environ.get("ARTIFACTS_LLM_ALLOWED_MODELS", "").split(",")
+    if value.strip()
+]
+ARTIFACTS_LLM_ALLOWED_ORIGINS = [
+    value.strip()
+    for value in os.environ.get("ARTIFACTS_LLM_ALLOWED_ORIGINS", "").split(",")
+    if value.strip()
+]
+ARTIFACTS_LLM_REQUIRE_SAME_ORIGIN = os.environ.get("ARTIFACTS_LLM_REQUIRE_SAME_ORIGIN", "1") == "1"
 
 agent_manager: Optional[AgentManager] = None
 _models_cache: dict = {"fetched_at": 0.0, "models": None, "error": None}
@@ -56,6 +82,155 @@ def _get_model_defaults() -> tuple[dict, Optional[str], str]:
     default_alias = "sonnet"
     default_model_id = cleaned.get(default_alias)
     return cleaned, default_model_id, default_alias
+
+
+def _normalize_artifact_id(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="Invalid artifact ID")
+    if len(value) > 128:
+        raise HTTPException(status_code=400, detail="Invalid artifact ID")
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+    if any(ch not in allowed for ch in value):
+        raise HTTPException(status_code=400, detail="Invalid artifact ID")
+    return value
+
+
+def _b64_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _b64_decode(data: str) -> bytes:
+    padding = "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(data + padding)
+
+
+def _make_artifact_session_token(artifact_id: str) -> tuple[str, int]:
+    now = int(time.time())
+    exp = now + max(60, ARTIFACTS_LLM_SESSION_TTL_S)
+    payload = {
+        "artifact_id": artifact_id,
+        "iat": now,
+        "exp": exp,
+        "nonce": secrets.token_hex(8),
+    }
+    body = _b64_encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    signature = hmac.new(
+        ARTIFACTS_LLM_SECRET.encode("utf-8"),
+        body.encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{body}.{signature}", exp
+
+
+def _verify_artifact_session_token(token: str, *, artifact_id: str) -> dict:
+    if not token or "." not in token:
+        raise HTTPException(status_code=401, detail="Missing artifact session")
+    body, signature = token.rsplit(".", 1)
+    expected = hmac.new(
+        ARTIFACTS_LLM_SECRET.encode("utf-8"),
+        body.encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=401, detail="Invalid artifact session")
+    try:
+        payload = json.loads(_b64_decode(body))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid artifact session")
+    if payload.get("artifact_id") != artifact_id:
+        raise HTTPException(status_code=401, detail="Invalid artifact session")
+    if int(payload.get("exp") or 0) < int(time.time()):
+        raise HTTPException(status_code=401, detail="Artifact session expired")
+    return payload
+
+
+def _get_request_origin(request: Request) -> Optional[str]:
+    origin = request.headers.get("Origin")
+    if origin:
+        return origin
+    referer = request.headers.get("Referer")
+    if not referer:
+        return None
+    parsed = urlparse(referer)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _origin_matches_request(origin: str, request: Request) -> bool:
+    if not origin:
+        return False
+    expected = f"{request.url.scheme}://{request.url.netloc}"
+    return origin == expected
+
+
+def _enforce_artifact_origin(request: Request) -> None:
+    origin = _get_request_origin(request)
+    if ARTIFACTS_LLM_ALLOWED_ORIGINS:
+        if not origin or origin not in ARTIFACTS_LLM_ALLOWED_ORIGINS:
+            raise HTTPException(status_code=403, detail="Origin not allowed")
+        return
+    if ARTIFACTS_LLM_REQUIRE_SAME_ORIGIN and origin and not _origin_matches_request(origin, request):
+        raise HTTPException(status_code=403, detail="Origin not allowed")
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+async def _enforce_artifact_rate_limit(artifact_id: str, request: Request) -> None:
+    if ARTIFACTS_LLM_RATE_LIMIT_PER_MIN <= 0:
+        return
+    if agent_manager is None:
+        return
+    ip = _get_client_ip(request)
+    window = int(time.time() // 60)
+    key = f"artifact-llm-rate:{artifact_id}:{ip}:{window}"
+    try:
+        count = await agent_manager.redis.incr(key)
+        if count == 1:
+            await agent_manager.redis.expire(key, 60)
+        if count > ARTIFACTS_LLM_RATE_LIMIT_PER_MIN:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Rate limit check failed; allowing request")
+
+
+async def _stream_openrouter_response(url: str, headers: dict, payload: dict) -> Response:
+    client = httpx.AsyncClient(timeout=None)
+    resp = await client.post(url, headers=headers, json=payload, timeout=None, stream=True)
+    if resp.status_code != 200:
+        content = await resp.aread()
+        await resp.aclose()
+        await client.aclose()
+        return Response(
+            content=content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get("content-type", "application/json"),
+        )
+
+    async def iter_bytes():
+        try:
+            async for chunk in resp.aiter_bytes():
+                if chunk:
+                    yield chunk
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        iter_bytes(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
 _active_realtime_calls: dict[str, asyncio.Task] = {}
 
 
@@ -764,6 +939,86 @@ async def health():
 ARTIFACTS_DIR = os.environ.get("ARTIFACTS_DIR", str(WORKSPACE_DIR / "artifacts"))
 
 
+@app.post("/artifacts/{artifact_id}/session")
+async def create_artifact_session(artifact_id: str, request: Request):
+    """Issue a short-lived HttpOnly cookie for artifact LLM proxy access."""
+    _enforce_artifact_origin(request)
+    artifact_id = _normalize_artifact_id(artifact_id)
+    if not ARTIFACTS_LLM_SECRET:
+        raise HTTPException(status_code=503, detail="Artifact session secret not configured")
+    token, exp = _make_artifact_session_token(artifact_id)
+    response = JSONResponse(
+        {
+            "status": "ok",
+            "artifact_id": artifact_id,
+            "expires_at": exp,
+        }
+    )
+    response.set_cookie(
+        ARTIFACTS_LLM_COOKIE_NAME,
+        token,
+        max_age=max(60, ARTIFACTS_LLM_SESSION_TTL_S),
+        httponly=True,
+        secure=ARTIFACTS_LLM_SECURE_COOKIE,
+        samesite="strict",
+        path=f"/artifacts/{artifact_id}",
+    )
+    return response
+
+
+@app.post("/artifacts/{artifact_id}/llm")
+async def artifact_llm_proxy(artifact_id: str, request: Request):
+    """Proxy OpenRouter chat/completions for same-origin artifacts."""
+    _enforce_artifact_origin(request)
+    artifact_id = _normalize_artifact_id(artifact_id)
+    token = request.cookies.get(ARTIFACTS_LLM_COOKIE_NAME)
+    _verify_artifact_session_token(token, artifact_id=artifact_id)
+    await _enforce_artifact_rate_limit(artifact_id, request)
+
+    if not OPENROUTER_API_KEY:
+        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY not configured")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise HTTPException(status_code=400, detail="messages must be a non-empty list")
+
+    model = payload.get("model") or ARTIFACTS_LLM_DEFAULT_MODEL
+    if ARTIFACTS_LLM_ALLOWED_MODELS and model not in ARTIFACTS_LLM_ALLOWED_MODELS:
+        raise HTTPException(status_code=400, detail="Model not allowed")
+    payload["model"] = model
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    referer = OPENROUTER_REFERER or _get_request_origin(request)
+    if referer:
+        headers["HTTP-Referer"] = referer
+    if OPENROUTER_APP_TITLE:
+        headers["X-Title"] = OPENROUTER_APP_TITLE
+
+    url = f"{OPENROUTER_BASE_URL.rstrip('/')}/chat/completions"
+    stream = payload.get("stream") is True
+    if stream:
+        headers["Accept"] = "text/event-stream"
+        return await _stream_openrouter_response(url, headers, payload)
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, headers=headers, json=payload)
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        media_type=resp.headers.get("content-type", "application/json"),
+    )
+
+
 @app.get("/artifacts/{file_path:path}")
 async def get_artifact(file_path: str):
     """
@@ -1147,6 +1402,8 @@ async def root():
             "GET /sessions": "List Claude sessions (newest first)",
             "GET /sessions/{id}": "Get session content (add ?raw=true for raw JSONL)",
             "GET /artifacts/{path}": "Public file access (no auth, no directory listing)",
+            "POST /artifacts/{id}/session": "Issue short-lived cookie for artifact LLM proxy",
+            "POST /artifacts/{id}/llm": "OpenRouter proxy for same-origin artifact LLM calls",
             "GET /skills": "List installed skills",
             "POST /skills": "Create/update a simple skill (SKILL.md only)",
             "POST /skills/upload": "Upload a skill zip file (with supporting files)",
