@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Söhne:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
     <style>
         :root {
@@ -5687,7 +5688,12 @@ Instructions for Claude on how to use this skill..."></textarea>
         function formatContent(text) {
             if (window.marked && typeof marked.parse === 'function') {
                 marked.setOptions({ breaks: true });
-                return marked.parse(text || '');
+                const html = marked.parse(text || '');
+                // Sanitize to prevent XSS attacks
+                if (window.DOMPurify) {
+                    return DOMPurify.sanitize(html);
+                }
+                return html;
             }
 
             // Fallback minimal formatting
