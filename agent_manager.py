@@ -20,8 +20,16 @@ import io
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
-from claude_code_sdk import ClaudeCodeOptions, ClaudeSDKClient, query
-from claude_code_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock, SystemMessage, UserMessage
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, query
+from claude_agent_sdk.types import (
+    AssistantMessage,
+    ResultMessage,
+    TextBlock,
+    ToolUseBlock,
+    SystemMessage,
+    UserMessage,
+    SystemPromptPreset,
+)
 import redis.asyncio as redis
 
 logger = logging.getLogger(__name__)
@@ -74,6 +82,7 @@ _WEBHOOK_REQUIRED_ALLOW_RULES: list[str] = [
     "Bash(python3 ./.claude/scripts/*:*)",
     "Bash(python3 .claude/scripts/*:*)",
 ]
+_DEFAULT_SETTING_SOURCES = ("user", "project", "local")
 _INTERRUPT_TTL_S = 86400 * 7
 
 def _format_query_error(*, stderr_text: str, exc: Exception) -> RuntimeError:
@@ -109,7 +118,7 @@ def _resolve_under(base_dir: Path, user_path: str) -> Path:
 async def _collect_query_events(
     *,
     prompt: str | Any,
-    options: ClaudeCodeOptions,
+    options: ClaudeAgentOptions,
 ) -> tuple[list[Any], Optional[RuntimeError]]:
     stderr_buf = io.StringIO()
     opts = dataclasses.replace(options, debug_stderr=stderr_buf, model=(options.model or None))
@@ -362,13 +371,21 @@ class AgentManager:
         project_context = self._load_project_context()
         append_system_prompt_parts = [part for part in (project_context, interrupt_note) if part]
         append_system_prompt = "\n\n".join(append_system_prompt_parts) if append_system_prompt_parts else None
-        options = ClaudeCodeOptions(
+        system_prompt: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
+        if append_system_prompt:
+            system_prompt = {
+                "type": "preset",
+                "preset": "claude_code",
+                "append": append_system_prompt,
+            }
+        options = ClaudeAgentOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
             model=(model or None),
             resume=resume_session_id,
             settings=settings,
-            append_system_prompt=append_system_prompt,
+            system_prompt=system_prompt,
+            setting_sources=list(_DEFAULT_SETTING_SOURCES),
         )
         
         # query() enables Claude Code preprocessing for slash commands and !` bash execution.
@@ -491,13 +508,21 @@ class AgentManager:
         project_context = self._load_project_context()
         append_system_prompt_parts = [part for part in (project_context, interrupt_note) if part]
         append_system_prompt = "\n\n".join(append_system_prompt_parts) if append_system_prompt_parts else None
-        options = ClaudeCodeOptions(
+        system_prompt: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
+        if append_system_prompt:
+            system_prompt = {
+                "type": "preset",
+                "preset": "claude_code",
+                "append": append_system_prompt,
+            }
+        options = ClaudeAgentOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
             model=(model or None),
             resume=resume_session_id,
             settings=settings,
-            append_system_prompt=append_system_prompt,
+            system_prompt=system_prompt,
+            setting_sources=list(_DEFAULT_SETTING_SOURCES),
         )
         
         # Signal that we're starting
@@ -522,7 +547,7 @@ class AgentManager:
 
         stream_session_id = resume_session_id or user_session_id
 
-        async def run_stream(current_options: ClaudeCodeOptions):
+        async def run_stream(current_options: ClaudeAgentOptions):
             nonlocal claude_session_id, usage, session_stored
 
             stderr_buf = io.StringIO()
