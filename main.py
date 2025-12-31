@@ -9,6 +9,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse, FileResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional
 from agent_manager import AgentManager, WORKSPACE_DIR
@@ -19,6 +23,31 @@ import websockets
 
 # Config
 logger = logging.getLogger(__name__)
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api"
+_OPENROUTER_DEFAULT_MODELS = {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "z-ai/glm-4.6",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "z-ai/glm-4.6",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "z-ai/glm-4.5-air",
+}
+_DEFAULT_ALIAS_ENV_KEYS = (
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+)
+
+
+def _apply_openrouter_defaults() -> None:
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    if not openrouter_key:
+        return
+    os.environ.setdefault("ANTHROPIC_AUTH_TOKEN", openrouter_key)
+    os.environ.setdefault("ANTHROPIC_BASE_URL", OPENROUTER_BASE_URL)
+    for key, value in _OPENROUTER_DEFAULT_MODELS.items():
+        os.environ.setdefault(key, value)
+
+
+_apply_openrouter_defaults()
 
 API_KEY = os.environ.get("API_KEY")
 ALLOW_BYPASS_PERMISSIONS = os.environ.get("ALLOW_BYPASS_PERMISSIONS", "0") == "1"
@@ -41,16 +70,64 @@ agent_manager: Optional[AgentManager] = None
 _models_cache: dict = {"fetched_at": 0.0, "models": None, "error": None}
 
 
+def _get_settings_path() -> Path:
+    return WORKSPACE_DIR / ".claude" / "settings.json"
+
+
+def _get_settings_mtime() -> Optional[float]:
+    try:
+        return _get_settings_path().stat().st_mtime
+    except FileNotFoundError:
+        return None
+    except Exception:
+        logger.exception("Failed to stat settings.json")
+        return None
+
+
+def _load_settings_env_overrides() -> dict[str, str]:
+    try:
+        settings_path = _get_settings_path()
+        if not settings_path.is_file():
+            return {}
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("Failed to read settings.json for model defaults")
+        return {}
+
+    env = settings.get("env")
+    if not isinstance(env, dict):
+        return {}
+
+    overrides: dict[str, str] = {}
+    for key in _DEFAULT_ALIAS_ENV_KEYS:
+        value = env.get(key)
+        if value is None:
+            continue
+        value_str = str(value).strip()
+        if value_str:
+            overrides[key] = value_str
+    return overrides
+
+
 def _is_openrouter_enabled() -> bool:
+    if os.environ.get("OPENROUTER_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        return True
     base_url = (os.environ.get("ANTHROPIC_BASE_URL") or "").lower().strip()
     return "openrouter.ai" in base_url
 
 
 def _get_model_defaults() -> tuple[dict, Optional[str], str]:
+    overrides = _load_settings_env_overrides()
     defaults = {
-        "opus": os.environ.get("ANTHROPIC_DEFAULT_OPUS_MODEL") or "",
-        "sonnet": os.environ.get("ANTHROPIC_DEFAULT_SONNET_MODEL") or "",
-        "haiku": os.environ.get("ANTHROPIC_DEFAULT_HAIKU_MODEL") or "",
+        "opus": overrides.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+        or os.environ.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+        or "",
+        "sonnet": overrides.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+        or os.environ.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+        or "",
+        "haiku": overrides.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+        or os.environ.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+        or "",
     }
     cleaned = {key: value for key, value in defaults.items() if value}
     default_alias = "sonnet"
@@ -74,11 +151,26 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Rate limiting
+RATE_LIMIT_CHAT = os.environ.get("RATE_LIMIT_CHAT", "20/minute")
+RATE_LIMIT_DEFAULT = os.environ.get("RATE_LIMIT_DEFAULT", "60/minute")
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return Response(
+        content=json.dumps({"detail": "Rate limit exceeded. Please slow down."}),
+        status_code=429,
+        media_type="application/json"
+    )
+
 # CORS for browser clients
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,  # API key via header, not cookies
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -371,7 +463,8 @@ async def _handle_realtime_call(call_id: str, metadata: dict[str, str], caller_l
 
 
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
-async def chat(req: ChatRequest):
+@limiter.limit(RATE_LIMIT_CHAT)
+async def chat(request: Request, req: ChatRequest):
     """
     Send a message to the Claude agent.
 
@@ -417,6 +510,7 @@ async def chat(req: ChatRequest):
 
 
 @app.post("/webhook", dependencies=[Depends(verify_api_key_webhook)])
+@limiter.limit(RATE_LIMIT_CHAT)
 async def webhook(
     request: Request,
     command: Optional[str] = None,
@@ -535,7 +629,8 @@ async def realtime_webhook(request: Request):
 
 
 @app.post("/chat/stream", dependencies=[Depends(verify_api_key)])
-async def chat_stream(req: ChatRequest):
+@limiter.limit(RATE_LIMIT_CHAT)
+async def chat_stream(request: Request, req: ChatRequest):
     """
     Stream a response from the Claude agent using Server-Sent Events.
 
@@ -625,6 +720,7 @@ async def list_models(refresh: bool = False):
     """
     cache_ttl_s = 60 * 60
     now = time.time()
+    settings_mtime = _get_settings_mtime()
     defaults, default_model_id, default_alias = _get_model_defaults()
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -637,6 +733,7 @@ async def list_models(refresh: bool = False):
         and _models_cache.get("models")
         and now - float(_models_cache.get("fetched_at", 0)) < cache_ttl_s
         and cache_source == desired_source
+        and _models_cache.get("settings_mtime") == settings_mtime
     ):
         return {
             "models": _models_cache["models"],
@@ -658,7 +755,7 @@ async def list_models(refresh: bool = False):
         ]
 
     if openrouter_enabled:
-        auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("OPENROUTER_API_KEY")
         headers = {}
         if auth_token:
             headers["Authorization"] = f"Bearer {auth_token}"
@@ -676,7 +773,13 @@ async def list_models(refresh: bool = False):
                 if m.get("id")
             ]
             _models_cache.update(
-                {"fetched_at": now, "models": models, "error": None, "source": "openrouter"}
+                {
+                    "fetched_at": now,
+                    "models": models,
+                    "error": None,
+                    "source": "openrouter",
+                    "settings_mtime": settings_mtime,
+                }
             )
             return {
                 "models": models,
@@ -688,7 +791,13 @@ async def list_models(refresh: bool = False):
         except Exception as e:
             logger.exception("Failed to fetch models from OpenRouter")
             _models_cache.update(
-                {"fetched_at": now, "models": fallback, "error": str(e), "source": "fallback"}
+                {
+                    "fetched_at": now,
+                    "models": fallback,
+                    "error": str(e),
+                    "source": "fallback",
+                    "settings_mtime": settings_mtime,
+                }
             )
             return {
                 "models": fallback,
@@ -701,7 +810,13 @@ async def list_models(refresh: bool = False):
 
     if not api_key:
         _models_cache.update(
-            {"fetched_at": now, "models": fallback, "error": "ANTHROPIC_API_KEY not set", "source": "fallback"}
+            {
+                "fetched_at": now,
+                "models": fallback,
+                "error": "ANTHROPIC_API_KEY not set",
+                "source": "fallback",
+                "settings_mtime": settings_mtime,
+            }
         )
         return {
             "models": fallback,
@@ -730,7 +845,13 @@ async def list_models(refresh: bool = False):
             if m.get("id")
         ]
         _models_cache.update(
-            {"fetched_at": now, "models": models, "error": None, "source": "anthropic"}
+            {
+                "fetched_at": now,
+                "models": models,
+                "error": None,
+                "source": "anthropic",
+                "settings_mtime": settings_mtime,
+            }
         )
         return {
             "models": models,
@@ -742,7 +863,13 @@ async def list_models(refresh: bool = False):
     except Exception as e:
         logger.exception("Failed to fetch models from Anthropic")
         _models_cache.update(
-            {"fetched_at": now, "models": fallback, "error": str(e), "source": "fallback"}
+            {
+                "fetched_at": now,
+                "models": fallback,
+                "error": str(e),
+                "source": "fallback",
+                "settings_mtime": settings_mtime,
+            }
         )
         return {
             "models": fallback,
