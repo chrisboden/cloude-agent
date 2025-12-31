@@ -62,3 +62,5 @@ AGENTS.md
 workspace_tree.py
 
 .cursorindexingignore
+
+.DS_Store
