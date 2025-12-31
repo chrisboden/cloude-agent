@@ -8,8 +8,13 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI globally
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude Code CLI and JS package managers globally
+RUN npm install -g @anthropic-ai/claude-code pnpm yarn
+
+# Install Bun
+ENV BUN_INSTALL=/usr/local/bun
+ENV PATH="/usr/local/bun/bin:${PATH}"
+RUN curl -fsSL https://bun.sh/install | bash
 
 # Create non-root user (required for bypassPermissions mode)
 RUN useradd -m -s /bin/bash appuser
@@ -20,6 +25,9 @@ WORKDIR /app
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Python package managers
+RUN pip install --no-cache-dir uv pipx
 
 # Copy application code
 COPY . .
