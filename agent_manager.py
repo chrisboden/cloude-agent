@@ -65,6 +65,7 @@ COMMANDS_DIR = Path(os.environ.get("COMMANDS_DIR", str(WORKSPACE_DIR / ".claude"
 PROJECT_CONTEXT_PATH = Path(
     os.environ.get("PROJECT_CONTEXT_PATH", str(WORKSPACE_DIR / ".claude" / "CLAUDE.md"))
 )
+PROMPTS_DIR = Path(os.environ.get("PROMPTS_DIR", str(WORKSPACE_DIR / "prompts")))
 _IMAGE_PROJECT_CONTEXT_FALLBACK = Path("/app/.claude/CLAUDE.md")
 
 _IDENTIFIER_RE = re.compile(r"^[a-z0-9_-]+$")
@@ -115,6 +116,44 @@ def _resolve_under(base_dir: Path, user_path: str) -> Path:
     return full_path
 
 
+def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    lines = (text or "").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, text
+
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            metadata: dict[str, str] = {}
+            for line in lines[1:idx]:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or ":" not in stripped:
+                    continue
+                key, value = stripped.split(":", 1)
+                metadata[key.strip().lower()] = value.strip().strip('"').strip("'")
+            body = "\n".join(lines[idx + 1 :])
+            return metadata, body
+
+    return {}, text
+
+
+def _merge_settings(base: Any, overlay: Any) -> Any:
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged = dict(base)
+        for key, value in overlay.items():
+            if key in merged:
+                merged[key] = _merge_settings(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+    if isinstance(base, list) and isinstance(overlay, list):
+        combined = list(base)
+        for item in overlay:
+            if item not in combined:
+                combined.append(item)
+        return combined
+    return overlay
+
+
 async def _collect_query_events(
     *,
     prompt: str | Any,
@@ -140,6 +179,7 @@ class AgentManager:
         # Ensure skills and commands directories exist
         SKILLS_DIR.mkdir(parents=True, exist_ok=True)
         COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
+        PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
         self._ensure_project_context_file()
 
     def _ensure_project_context_file(self) -> None:
@@ -214,6 +254,40 @@ class AgentManager:
         if len(content) > max_chars:
             content = content[:max_chars] + "\n\n[...truncated...]"
         return content
+
+    def _load_prompt_override(self, prompt_id: Optional[str]) -> Optional[str]:
+        if not prompt_id:
+            return None
+        prompt_id = _normalize_identifier(prompt_id, kind="prompt")
+        prompt_file = PROMPTS_DIR / f"{prompt_id}.md"
+        if not prompt_file.is_file():
+            raise ValueError(f"Prompt '{prompt_id}' not found")
+        content = prompt_file.read_text(encoding="utf-8")
+        _, body = _parse_frontmatter(content)
+        body = (body or "").strip()
+        if not body:
+            raise ValueError(f"Prompt '{prompt_id}' is empty")
+        return body
+
+    def _load_project_settings(self) -> Optional[str]:
+        settings_path = WORKSPACE_DIR / ".claude" / "settings.json"
+        local_path = WORKSPACE_DIR / ".claude" / "settings.local.json"
+        merged: dict[str, Any] = {}
+
+        for candidate in (settings_path, local_path):
+            if not candidate.is_file():
+                continue
+            try:
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+            except Exception:
+                logger.exception("Failed to read settings from %s", candidate)
+                continue
+            if isinstance(payload, dict):
+                merged = _merge_settings(merged, payload)
+
+        if not merged:
+            return None
+        return json.dumps(merged)
 
     async def _register_active_stream(self, user_session_id: str, client: ClaudeSDKClient) -> None:
         async with self._active_streams_lock:
@@ -367,8 +441,10 @@ class AgentManager:
             settings = self._build_webhook_settings()
         
         interrupt_note = await self._consume_interrupt_note(user_session_id)
+        prompt_override = self._load_prompt_override((context or {}).get("prompt_id"))
+        use_project_setting_source = prompt_override is None
         # Set working directory to workspace for file operations and for discovering .claude/commands/ etc.
-        project_context = self._load_project_context()
+        project_context = prompt_override or self._load_project_context()
         append_system_prompt_parts = [part for part in (project_context, interrupt_note) if part]
         append_system_prompt = "\n\n".join(append_system_prompt_parts) if append_system_prompt_parts else None
         system_prompt: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
@@ -378,6 +454,11 @@ class AgentManager:
                 "preset": "claude_code",
                 "append": append_system_prompt,
             }
+        setting_sources = list(_DEFAULT_SETTING_SOURCES)
+        if not use_project_setting_source and "project" in setting_sources:
+            setting_sources.remove("project")
+        if not settings and not use_project_setting_source:
+            settings = self._load_project_settings()
         options = ClaudeAgentOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
@@ -385,7 +466,7 @@ class AgentManager:
             resume=resume_session_id,
             settings=settings,
             system_prompt=system_prompt,
-            setting_sources=list(_DEFAULT_SETTING_SOURCES),
+            setting_sources=setting_sources,
         )
         
         # query() enables Claude Code preprocessing for slash commands and !` bash execution.
@@ -504,8 +585,10 @@ class AgentManager:
             settings = self._build_webhook_settings()
         
         interrupt_note = await self._consume_interrupt_note(user_session_id)
+        prompt_override = self._load_prompt_override((context or {}).get("prompt_id"))
+        use_project_setting_source = prompt_override is None
         # Set working directory to workspace for file operations and for discovering .claude/commands/ etc.
-        project_context = self._load_project_context()
+        project_context = prompt_override or self._load_project_context()
         append_system_prompt_parts = [part for part in (project_context, interrupt_note) if part]
         append_system_prompt = "\n\n".join(append_system_prompt_parts) if append_system_prompt_parts else None
         system_prompt: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
@@ -515,6 +598,11 @@ class AgentManager:
                 "preset": "claude_code",
                 "append": append_system_prompt,
             }
+        setting_sources = list(_DEFAULT_SETTING_SOURCES)
+        if not use_project_setting_source and "project" in setting_sources:
+            setting_sources.remove("project")
+        if not settings and not use_project_setting_source:
+            settings = self._load_project_settings()
         options = ClaudeAgentOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
@@ -522,7 +610,7 @@ class AgentManager:
             resume=resume_session_id,
             settings=settings,
             system_prompt=system_prompt,
-            setting_sources=list(_DEFAULT_SETTING_SOURCES),
+            setting_sources=setting_sources,
         )
         
         # Signal that we're starting
@@ -957,6 +1045,31 @@ class AgentManager:
             "to": str(dst_full.relative_to(WORKSPACE_DIR)),
             "moved": True,
         }
+
+    # Prompt management methods
+    def list_prompts(self) -> list[dict]:
+        """List all available prompt overrides."""
+        prompts = []
+        if PROMPTS_DIR.exists():
+            for prompt_file in sorted(PROMPTS_DIR.glob("*.md")):
+                try:
+                    prompt_id = _normalize_identifier(prompt_file.stem, kind="prompt")
+                except ValueError:
+                    continue
+                if prompt_id != prompt_file.stem:
+                    continue
+                try:
+                    content = prompt_file.read_text(encoding="utf-8")
+                except Exception:
+                    logger.exception("Failed to read prompt %s", prompt_file)
+                    continue
+                metadata, _ = _parse_frontmatter(content)
+                prompts.append({
+                    "id": prompt_id,
+                    "name": metadata.get("name") or prompt_id,
+                    "description": metadata.get("description") or "",
+                })
+        return prompts
 
     # Command management methods
     def list_commands(self) -> list[dict]:

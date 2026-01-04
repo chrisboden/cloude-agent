@@ -2078,6 +2078,15 @@ Instructions for Claude on how to use this skill..."></textarea>
                     </div>
                     <div class="model-default-hint" id="modelSelectionHint">Current: Default</div>
                 </div>
+                <div class="settings-section">
+                    <div class="settings-section-header">
+                        <h3>Prompt Override</h3>
+                    </div>
+                    <select class="model-select" id="promptSelect">
+                        <option value="">Default (CLAUDE.md)</option>
+                    </select>
+                    <div class="model-default-hint" id="promptSelectionHint">Using CLAUDE.md</div>
+                </div>
             </div>
         </div>
     </div>
@@ -2231,6 +2240,7 @@ Instructions for Claude on how to use this skill..."></textarea>
             loadApiUrl();
             loadApiKey();
             loadModel();
+            loadPromptSelection();
             loadChats();
             loadSkills();
             setupEventListeners();
@@ -2302,6 +2312,7 @@ Instructions for Claude on how to use this skill..."></textarea>
 
             // Model selection
             setupModelPicker();
+            setupPromptSelector();
 
             // Drag and drop for chat files
             dropZone.addEventListener('dragover', (e) => {
@@ -2386,6 +2397,7 @@ Instructions for Claude on how to use this skill..."></textarea>
                 document.getElementById('apiKey').value = saved;
                 checkConnection();
                 loadModelsFromApi();
+                loadPromptsFromApi();
             }
         }
 
@@ -2400,6 +2412,12 @@ Instructions for Claude on how to use this skill..."></textarea>
         let selectedModelId = '';
         let defaultModelId = '';
         let defaultModelAlias = 'sonnet';
+
+        // Prompt override management
+        let promptDisplayNames = {};
+        let promptDescriptions = {};
+        let promptsCache = [];
+        let selectedPromptId = '';
         const MODEL_DROPDOWN_LIMIT = 200;
         const MODEL_DROPDOWN_IDLE_LIMIT = 50;
 
@@ -2628,6 +2646,108 @@ Instructions for Claude on how to use this skill..."></textarea>
                 defaultModelAlias = data.default_model_alias || defaultModelAlias;
                 updateModelSelectionUI();
                 renderModelDropdown(document.getElementById('modelSearchInput')?.value || '');
+            } catch (e) {
+                // ignore; keep existing list
+            }
+        }
+
+        function loadPromptSelection() {
+            selectedPromptId = localStorage.getItem('clawed_prompt_id') || '';
+            updatePromptSelectionUI();
+        }
+
+        function setSelectedPrompt(promptId) {
+            selectedPromptId = promptId || '';
+            if (selectedPromptId) {
+                localStorage.setItem('clawed_prompt_id', selectedPromptId);
+            } else {
+                localStorage.removeItem('clawed_prompt_id');
+            }
+            updatePromptSelectionUI();
+        }
+
+        function getSelectedPrompt() {
+            return selectedPromptId;
+        }
+
+        function updatePromptSelectionUI() {
+            const select = document.getElementById('promptSelect');
+            if (select && select.value !== selectedPromptId) {
+                select.value = selectedPromptId;
+            }
+            const hint = document.getElementById('promptSelectionHint');
+            if (hint) {
+                if (selectedPromptId) {
+                    const desc = promptDescriptions[selectedPromptId] || 'Custom prompt selected';
+                    hint.textContent = desc;
+                } else {
+                    hint.textContent = 'Using CLAUDE.md';
+                }
+            }
+        }
+
+        function renderPromptOptions() {
+            const select = document.getElementById('promptSelect');
+            if (!select) return;
+
+            const options = ['<option value="">Default (CLAUDE.md)</option>'];
+            const knownIds = new Set();
+            for (const prompt of promptsCache) {
+                if (!prompt || !prompt.id) continue;
+                const id = prompt.id;
+                const name = prompt.name || id;
+                const desc = prompt.description || '';
+                promptDisplayNames[id] = name;
+                promptDescriptions[id] = desc;
+                knownIds.add(id);
+                const label = desc ? `${name} - ${desc}` : name;
+                options.push(`<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`);
+            }
+
+            select.innerHTML = options.join('');
+            if (selectedPromptId && !knownIds.has(selectedPromptId)) {
+                setSelectedPrompt('');
+            } else {
+                updatePromptSelectionUI();
+            }
+        }
+
+        function setupPromptSelector() {
+            const select = document.getElementById('promptSelect');
+            if (!select) return;
+            if (select.dataset.listenersInstalled === '1') return;
+            select.dataset.listenersInstalled = '1';
+            select.addEventListener('change', () => {
+                setSelectedPrompt(select.value);
+            });
+        }
+
+        async function loadPromptsFromApi() {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey || !API_URL) {
+                promptsCache = [];
+                promptDisplayNames = {};
+                promptDescriptions = {};
+                renderPromptOptions();
+                return;
+            }
+
+            try {
+                const resp = await fetch(`${API_URL}/prompts`, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (!resp.ok) {
+                    promptsCache = [];
+                    promptDisplayNames = {};
+                    promptDescriptions = {};
+                    renderPromptOptions();
+                    return;
+                }
+                const data = await resp.json();
+                promptsCache = data.prompts || [];
+                promptDisplayNames = {};
+                promptDescriptions = {};
+                renderPromptOptions();
             } catch (e) {
                 // ignore; keep existing list
             }
@@ -5060,6 +5180,10 @@ Instructions for Claude on how to use this skill..."></textarea>
                 statusEl.className = 'api-status disconnected';
                 statusText.textContent = 'API URL not set';
                 renderSkills([]);
+                promptsCache = [];
+                promptDisplayNames = {};
+                promptDescriptions = {};
+                renderPromptOptions();
                 return;
             }
 
@@ -5067,6 +5191,10 @@ Instructions for Claude on how to use this skill..."></textarea>
                 statusEl.className = 'api-status disconnected';
                 statusText.textContent = 'Not connected';
                 renderSkills([]);
+                promptsCache = [];
+                promptDisplayNames = {};
+                promptDescriptions = {};
+                renderPromptOptions();
                 return;
             }
 
@@ -5077,15 +5205,24 @@ Instructions for Claude on how to use this skill..."></textarea>
                     statusText.textContent = 'Connected';
                     loadSkills();
                     loadModelsFromApi();
+                    loadPromptsFromApi();
                 } else {
                     statusEl.className = 'api-status disconnected';
                     statusText.textContent = 'Connection failed';
                     renderSkills([]);
+                    promptsCache = [];
+                    promptDisplayNames = {};
+                    promptDescriptions = {};
+                    renderPromptOptions();
                 }
             } catch {
                 statusEl.className = 'api-status disconnected';
                 statusText.textContent = 'Connection failed';
                 renderSkills([]);
+                promptsCache = [];
+                promptDisplayNames = {};
+                promptDescriptions = {};
+                renderPromptOptions();
             }
             updateSendButton();
         }
@@ -5426,6 +5563,10 @@ Instructions for Claude on how to use this skill..."></textarea>
 
                 if (selectedModel) {
                     requestBody.model = selectedModel;
+                }
+                const selectedPrompt = getSelectedPrompt();
+                if (selectedPrompt) {
+                    requestBody.context.prompt_id = selectedPrompt;
                 }
 
                 // Only include images if there are any

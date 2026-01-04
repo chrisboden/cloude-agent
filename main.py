@@ -201,6 +201,10 @@ class ChatContext(BaseModel):
         default="acceptEdits",
         description="Permission mode: 'default', 'acceptEdits' (auto-approve file edits), or 'bypassPermissions' (approve all tools)"
     )
+    prompt_id: Optional[str] = Field(
+        default=None,
+        description="Prompt override ID (maps to /prompts/*.md frontmatter)",
+    )
     metadata: dict = Field(default_factory=dict)
 
 
@@ -504,6 +508,8 @@ async def chat(request: Request, req: ChatRequest):
         return ChatResponse(**result)
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("Unhandled /chat error")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -681,6 +687,8 @@ async def chat_stream(request: Request, req: ChatRequest):
                 model=req.model
             ):
                 yield f"data: {json.dumps(event)}\n\n"
+        except ValueError as e:
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         except Exception as e:
             logger.exception("Unhandled /chat/stream error")
             yield f"data: {json.dumps({'type': 'error', 'error': 'Internal server error'})}\n\n"
@@ -1098,6 +1106,12 @@ async def list_commands():
     return {"commands": agent_manager.list_commands()}
 
 
+@app.get("/prompts", dependencies=[Depends(verify_api_key)])
+async def list_prompts():
+    """List available prompt overrides."""
+    return {"prompts": agent_manager.list_prompts()}
+
+
 @app.get("/commands/{command_id}", dependencies=[Depends(verify_api_key)])
 async def get_command(command_id: str):
     """Get a specific command's template."""
@@ -1267,6 +1281,7 @@ async def root():
             "GET /commands/{id}": "Get command template",
             "POST /commands": "Create/update a command",
             "DELETE /commands/{id}": "Delete a command",
+            "GET /prompts": "List available prompt overrides",
             "GET /workspace": "List files in workspace",
             "GET /workspace/{path}": "Download file from workspace",
             "DELETE /workspace/{path}": "Delete file from workspace",

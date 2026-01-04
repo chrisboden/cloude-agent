@@ -7,6 +7,7 @@ SKILLS_DIR="${SKILLS_DIR:-$WORKSPACE_DIR/.claude/skills}"
 COMMANDS_DIR="${COMMANDS_DIR:-$WORKSPACE_DIR/.claude/commands}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-$WORKSPACE_DIR/.claude/scripts}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-$WORKSPACE_DIR/artifacts}"
+PROMPTS_DIR="${PROMPTS_DIR:-$WORKSPACE_DIR/prompts}"
 CLAUDE_CONFIG_DIR="${WORKSPACE_DIR}/.claude-home"
 
 # Create directories if they don't exist
@@ -15,6 +16,7 @@ mkdir -p "$SKILLS_DIR"
 mkdir -p "$COMMANDS_DIR"
 mkdir -p "$SCRIPTS_DIR"
 mkdir -p "$ARTIFACTS_DIR"
+mkdir -p "$PROMPTS_DIR"
 mkdir -p "$CLAUDE_CONFIG_DIR"
 
 # Seed default commands/skills from the image into the volume on first run.
