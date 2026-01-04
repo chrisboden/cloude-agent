@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clawed - Chat</title>
+    <title>Claude Agent - Chat</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Söhne:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -11,6 +11,15 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
     <style>
+        /* =========================================================
+           Stylesheet map
+           - Theme + reset
+           - Sidebar + controls
+           - Main chat surface
+           - Messages + markdown
+           - Modals + explorer
+           - Utilities + animations
+           ========================================================= */
         :root {
             --bg-primary: #1a1a1a;
             --bg-secondary: #242424;
@@ -1607,6 +1616,7 @@
         }
 
         #commandsContent.drag-over,
+        #promptsContent.drag-over,
         #scriptsContent.drag-over {
             outline: 2px dashed rgba(217, 119, 87, 0.6);
             outline-offset: -2px;
@@ -1867,7 +1877,9 @@
     </style>
 </head>
 <body>
+    <!-- Layout: sidebar + main chat surface + modals -->
     <div class="app">
+        <!-- Sidebar -->
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
@@ -1907,6 +1919,7 @@
             </div>
         </aside>
 
+        <!-- Main chat surface -->
         <main class="main">
             <!-- Top-right buttons -->
             <div class="top-buttons">
@@ -2091,7 +2104,7 @@ Instructions for Claude on how to use this skill..."></textarea>
         </div>
     </div>
 
-	    <!-- Explorer Modal (Full-pane) - Skills, Artifacts, Commands & Sessions -->
+	    <!-- Explorer Modal (Full-pane) - Skills, Artifacts, Commands, Prompts & Sessions -->
 	    <div class="artifacts-modal-overlay" id="artifactsModal">
 	        <div class="artifacts-modal-header">
 	            <div class="explorer-tabs">
@@ -2099,6 +2112,7 @@ Instructions for Claude on how to use this skill..."></textarea>
 	                <button class="explorer-tab" id="tabSkills" onclick="switchExplorerTab('skills')">Skills</button>
 	                <button class="explorer-tab active" id="tabArtifacts" onclick="switchExplorerTab('artifacts')">Artifacts</button>
 	                <button class="explorer-tab" id="tabCommands" onclick="switchExplorerTab('commands')">Commands</button>
+	                <button class="explorer-tab" id="tabPrompts" onclick="switchExplorerTab('prompts')">Prompts</button>
 	                <button class="explorer-tab" id="tabScripts" onclick="switchExplorerTab('scripts')">Scripts</button>
 	                <button class="explorer-tab" id="tabSessions" onclick="switchExplorerTab('sessions')">Sessions</button>
 	            </div>
@@ -2185,6 +2199,21 @@ Instructions for Claude on how to use this skill..."></textarea>
 	                    <p>Slash commands will appear here.</p>
 	                </div>
 	            </div>
+	            <!-- Prompts Tab Content -->
+	            <div id="promptsContent" style="display: none;">
+	                <div class="artifacts-empty">
+	                    <div class="artifacts-empty-icon">
+	                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+	                            <path d="M4 19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2z"></path>
+	                            <polyline points="14 2 14 8 20 8"></polyline>
+	                            <line x1="8" y1="13" x2="16" y2="13"></line>
+	                            <line x1="8" y1="17" x2="16" y2="17"></line>
+	                        </svg>
+	                    </div>
+	                    <h3>Prompts</h3>
+	                    <p>Prompt overrides stored under <code>prompts/</code></p>
+	                </div>
+	            </div>
 	            <!-- Scripts Tab Content -->
 	            <div id="scriptsContent" style="display: none;">
 	                <div class="artifacts-empty">
@@ -2219,6 +2248,19 @@ Instructions for Claude on how to use this skill..."></textarea>
     </div>
 
         <script>
+            // =========================================================
+            // Script map
+            // - State + caches
+            // - App bootstrap + event wiring
+            // - API + connection
+            // - Model selection
+            // - Prompt overrides
+            // - Skills + commands + prompts + scripts
+            // - Chat + streaming
+            // - Explorer + editors
+            // =========================================================
+
+            // State + caches
             let API_URL = localStorage.getItem('clawed_api_url') || '';
 
             let currentSessionId = null;
@@ -2231,7 +2273,7 @@ Instructions for Claude on how to use this skill..."></textarea>
             const messageMarkdown = {};
             let skillsContentTemplate = null;
 
-        // Initialize
+        // App bootstrap
         document.addEventListener('DOMContentLoaded', () => {
             const skillsContentEl = document.getElementById('skillsContent');
             if (skillsContentEl) {
@@ -2246,9 +2288,11 @@ Instructions for Claude on how to use this skill..."></textarea>
             setupEventListeners();
             autoResizeTextarea();
             setupCommandsDragDrop();
+            setupPromptsDragDrop();
             setupScriptsDragDrop();
         });
 
+        // Event wiring + UI helpers
         function installSkillsDropZoneListeners() {
             const skillsDropZone = document.getElementById('skillsDropZone');
             if (!skillsDropZone) return;
@@ -2418,6 +2462,12 @@ Instructions for Claude on how to use this skill..."></textarea>
         let promptDescriptions = {};
         let promptsCache = [];
         let selectedPromptId = '';
+        function resetPromptCache() {
+            promptsCache = [];
+            promptDisplayNames = {};
+            promptDescriptions = {};
+            renderPromptOptions();
+        }
         const MODEL_DROPDOWN_LIMIT = 200;
         const MODEL_DROPDOWN_IDLE_LIMIT = 50;
 
@@ -2725,10 +2775,7 @@ Instructions for Claude on how to use this skill..."></textarea>
         async function loadPromptsFromApi() {
             const apiKey = document.getElementById('apiKey').value;
             if (!apiKey || !API_URL) {
-                promptsCache = [];
-                promptDisplayNames = {};
-                promptDescriptions = {};
-                renderPromptOptions();
+                resetPromptCache();
                 return;
             }
 
@@ -2737,10 +2784,7 @@ Instructions for Claude on how to use this skill..."></textarea>
                     headers: { 'X-API-Key': apiKey }
                 });
                 if (!resp.ok) {
-                    promptsCache = [];
-                    promptDisplayNames = {};
-                    promptDescriptions = {};
-                    renderPromptOptions();
+                    resetPromptCache();
                     return;
                 }
                 const data = await resp.json();
@@ -3752,7 +3796,7 @@ Instructions for Claude on how to use this skill..."></textarea>
             }
         }
 
-        // Upload files to a workspace directory (for commands/scripts)
+        // Upload files to a workspace directory (for commands/prompts/scripts)
         async function uploadWorkspaceFiles(fileList, targetDir) {
             const apiKey = document.getElementById('apiKey').value;
             if (!apiKey) {
@@ -3840,6 +3884,50 @@ Instructions for Claude on how to use this skill..."></textarea>
                 const uploaded = await uploadWorkspaceFiles(mdFiles, '.claude/commands');
                 if (uploaded) {
                     await loadCommands();
+                }
+            });
+        }
+
+        // Setup drag-drop for prompts tab
+        function setupPromptsDragDrop() {
+            const contentEl = document.getElementById('promptsContent');
+            if (!contentEl) return;
+
+            contentEl.addEventListener('dragover', (e) => {
+                if (currentExplorerTab !== 'prompts') return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.dataTransfer) {
+                    e.dataTransfer.dropEffect = 'copy';
+                }
+                contentEl.classList.add('drag-over');
+            });
+
+            contentEl.addEventListener('dragleave', (e) => {
+                if (currentExplorerTab !== 'prompts') return;
+                if (!e.relatedTarget || !contentEl.contains(e.relatedTarget)) {
+                    contentEl.classList.remove('drag-over');
+                }
+            });
+
+            contentEl.addEventListener('drop', async (e) => {
+                if (currentExplorerTab !== 'prompts') return;
+                e.preventDefault();
+                e.stopPropagation();
+                contentEl.classList.remove('drag-over');
+
+                const files = e.dataTransfer?.files;
+                if (!files || files.length === 0) return;
+
+                const mdFiles = Array.from(files).filter(f => f.name.endsWith('.md'));
+                if (mdFiles.length === 0) {
+                    alert('Please drop .md files for prompts');
+                    return;
+                }
+
+                const uploaded = await uploadWorkspaceFiles(mdFiles, 'prompts');
+                if (uploaded) {
+                    await loadPromptFiles();
                 }
             });
         }
@@ -4159,6 +4247,230 @@ Instructions for Claude on how to use this skill..."></textarea>
 	        async function openCommandEditor(cmdId, encodedPath) {
 	            const path = decodeURIComponent(encodedPath);
 	            openTextEditor(path, `/${cmdId}`);
+	        }
+
+	        async function loadPromptFiles() {
+	            const apiKey = document.getElementById('apiKey').value;
+	            if (!apiKey) {
+	                renderPromptFilesEmpty();
+	                return;
+	            }
+
+	            const contentEl = document.getElementById('promptsContent');
+	            contentEl.innerHTML = '<div class="artifacts-empty"><p>Loading...</p></div>';
+
+	            const basePath = 'prompts';
+	            try {
+	                const response = await fetch(`${API_URL}/workspace?path=${encodeURIComponent(basePath)}`, {
+	                    headers: { 'X-API-Key': apiKey }
+	                });
+
+	                if (response.ok) {
+	                    const data = await response.json();
+	                    renderPromptFilesList(data.files || [], basePath);
+	                } else {
+	                    renderPromptFilesEmpty();
+	                }
+	            } catch (e) {
+	                console.error('Failed to load prompts:', e);
+	                renderPromptFilesEmpty();
+	            }
+	        }
+
+	        function renderPromptFilesEmpty() {
+	            const contentEl = document.getElementById('promptsContent');
+	            contentEl.innerHTML = `
+	                <div class="artifacts-empty">
+	                    <div class="artifacts-empty-icon">
+	                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+	                            <path d="M4 19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2z"></path>
+	                            <polyline points="14 2 14 8 20 8"></polyline>
+	                            <line x1="8" y1="13" x2="16" y2="13"></line>
+	                            <line x1="8" y1="17" x2="16" y2="17"></line>
+	                        </svg>
+	                    </div>
+	                    <h3>No prompts found</h3>
+	                    <p>Prompt overrides live under <code>prompts/</code></p>
+	                    <button class="artifacts-refresh-btn" style="margin-top: 12px;" onclick="promptOpenWorkspaceFile()">Open file path</button>
+	                </div>
+	            `;
+	        }
+
+	        function shouldHidePromptItem(name) {
+	            const n = String(name || '');
+	            return n === '__pycache__' || n === '.DS_Store' || n.endsWith('.pyc');
+	        }
+
+	        function renderPromptFilesList(files, basePath) {
+	            const contentEl = document.getElementById('promptsContent');
+
+	            const visible = (files || []).filter(f => f && !shouldHidePromptItem(f.name));
+	            let html = `
+	                <div class="skills-pane-header" style="margin-bottom: 12px;">
+	                    <div>
+	                        <div class="skills-pane-title">Prompts</div>
+	                        <div class="skills-pane-subtitle">Edit prompt overrides stored under <code>${escapeHtml(basePath)}</code></div>
+	                    </div>
+	                    <div class="skills-pane-actions">
+	                        <button class="artifacts-refresh-btn" onclick="promptOpenWorkspaceFile()">Open file path</button>
+	                    </div>
+	                </div>
+	                <div class="artifacts-tree">
+	            `;
+
+	            if (visible.length === 0) {
+	                html += '<div style="padding: 12px; color: #888;">(empty)</div></div>';
+	                contentEl.innerHTML = html;
+	                return;
+	            }
+
+	            for (const file of visible) {
+	                const fullPath = `${basePath}/${file.name}`;
+	                if (file.is_dir) {
+	                    const folderId = `folder-${fullPath.replace(/[^a-zA-Z0-9]/g, '-')}`;
+	                    html += `
+	                        <div class="artifacts-folder">
+	                            <div class="artifacts-folder-header" onclick="togglePromptFolder('${escapeHtml(fullPath)}', '${folderId}')" style="cursor: pointer;">
+	                                <svg class="folder-chevron" id="chevron-${folderId}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transition: transform 0.2s;">
+	                                    <polyline points="9 18 15 12 9 6"></polyline>
+	                                </svg>
+	                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+	                                </svg>
+	                                <span class="artifacts-folder-name">${escapeHtml(file.name)}</span>
+	                            </div>
+	                            <div class="artifacts-folder-contents" id="${folderId}" style="display: none;"></div>
+	                        </div>
+	                    `;
+	                } else {
+	                    html += renderPromptFileRow(file.name, fullPath);
+	                }
+	            }
+
+	            html += '</div>';
+	            contentEl.innerHTML = html;
+	        }
+
+	        function renderPromptFolderContents(files, basePath) {
+	            const visible = (files || []).filter(f => f && !shouldHidePromptItem(f.name));
+	            if (visible.length === 0) {
+	                return '<div style="padding: 8px 0 8px 20px; color: #888;">(empty)</div>';
+	            }
+
+	            let html = '';
+	            for (const file of visible) {
+	                const fullPath = `${basePath}/${file.name}`;
+	                if (file.is_dir) {
+	                    const folderId = `folder-${fullPath.replace(/[^a-zA-Z0-9]/g, '-')}`;
+	                    html += `
+	                        <div class="artifacts-folder" style="margin-left: 20px;">
+	                            <div class="artifacts-folder-header" onclick="togglePromptFolder('${escapeHtml(fullPath)}', '${folderId}')" style="cursor: pointer;">
+	                                <svg class="folder-chevron" id="chevron-${folderId}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transition: transform 0.2s;">
+	                                    <polyline points="9 18 15 12 9 6"></polyline>
+	                                </svg>
+	                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+	                                </svg>
+	                                <span class="artifacts-folder-name">${escapeHtml(file.name)}</span>
+	                            </div>
+	                            <div class="artifacts-folder-contents" id="${folderId}" style="display: none;"></div>
+	                        </div>
+	                    `;
+	                } else {
+	                    html += `<div style="margin-left: 20px;">${renderPromptFileRow(file.name, fullPath)}</div>`;
+	                }
+	            }
+	            return html;
+	        }
+
+	        function renderPromptFileRow(name, workspacePath) {
+	            const encodedPath = encodeURIComponent(workspacePath || '');
+	            const encodedTitle = encodeURIComponent(name || '');
+	            const canEdit = isEditableTextFile(workspacePath || name);
+	            const editBtn = canEdit ? `
+	                        <button class="artifacts-file-btn" onclick="editPromptWorkspaceFile('${encodedPath}', '${encodedTitle}')" title="Edit">
+	                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+	                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+	                            </svg>
+	                        </button>
+	            ` : '';
+
+	            return `
+	                <div class="artifacts-file">
+	                    <div class="artifacts-file-icon">
+	                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+	                            <polyline points="14 2 14 8 20 8"/>
+	                        </svg>
+	                    </div>
+	                    <div class="artifacts-file-info">
+	                        <span class="artifacts-file-name">${escapeHtml(name)}</span>
+	                        <div class="artifacts-file-url">${escapeHtml(workspacePath)}</div>
+	                    </div>
+	                    <div class="artifacts-file-actions">
+	                        ${editBtn}
+	                        <button class="artifacts-file-btn delete" onclick="deletePromptWorkspaceFile('${encodedPath}')" title="Delete">
+	                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	                                <polyline points="3 6 5 6 21 6"></polyline>
+	                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+	                            </svg>
+	                        </button>
+	                    </div>
+	                </div>
+	            `;
+	        }
+
+	        async function togglePromptFolder(path, folderId) {
+	            const contentsEl = document.getElementById(folderId);
+	            const chevronEl = document.getElementById(`chevron-${folderId}`);
+	            if (!contentsEl || !chevronEl) return;
+
+	            if (contentsEl.style.display === 'none') {
+	                contentsEl.style.display = 'block';
+	                chevronEl.style.transform = 'rotate(90deg)';
+
+	                if (contentsEl.innerHTML === '') {
+	                    contentsEl.innerHTML = '<div style="padding: 8px 0 8px 20px; color: #888;">Loading...</div>';
+	                    const apiKey = document.getElementById('apiKey').value;
+	                    try {
+	                        const response = await fetch(`${API_URL}/workspace?path=${encodeURIComponent(path)}`, {
+	                            headers: { 'X-API-Key': apiKey }
+	                        });
+	                        if (response.ok) {
+	                            const data = await response.json();
+	                            const files = data.files || [];
+	                            contentsEl.innerHTML = renderPromptFolderContents(files, path);
+	                        } else {
+	                            contentsEl.innerHTML = '<div style="padding: 8px 0 8px 20px; color: #f66;">Failed to load</div>';
+	                        }
+	                    } catch (e) {
+	                        contentsEl.innerHTML = '<div style="padding: 8px 0 8px 20px; color: #f66;">Failed to load</div>';
+	                    }
+	                }
+	            } else {
+	                contentsEl.style.display = 'none';
+	                chevronEl.style.transform = 'rotate(0deg)';
+	            }
+	        }
+
+	        async function editPromptWorkspaceFile(encodedPath, encodedTitle) {
+	            const path = decodeURIComponent(encodedPath || '');
+	            const title = decodeURIComponent(encodedTitle || '') || path;
+	            if (!isEditableTextFile(path)) {
+	                alert('This file type is not editable in the browser.');
+	                return;
+	            }
+	            await openTextEditor(path, title, { containerId: 'promptsContent', onBack: loadPromptFiles });
+	        }
+
+	        async function deletePromptWorkspaceFile(encodedPath) {
+	            const path = decodeURIComponent(encodedPath || '');
+	            if (!path) return;
+	            if (!confirm(`Delete "${path}"?`)) return;
+	            const ok = await deleteWorkspaceItem(path);
+	            if (!ok) return;
+	            await loadPromptFiles();
 	        }
 
 		        async function loadScripts() {
@@ -4707,6 +5019,7 @@ Instructions for Claude on how to use this skill..."></textarea>
 	            document.getElementById('tabSkills').classList.toggle('active', tab === 'skills');
 	            document.getElementById('tabArtifacts').classList.toggle('active', tab === 'artifacts');
 	            document.getElementById('tabCommands').classList.toggle('active', tab === 'commands');
+	            document.getElementById('tabPrompts').classList.toggle('active', tab === 'prompts');
 	            document.getElementById('tabScripts').classList.toggle('active', tab === 'scripts');
 	            document.getElementById('tabSessions').classList.toggle('active', tab === 'sessions');
 
@@ -4715,6 +5028,7 @@ Instructions for Claude on how to use this skill..."></textarea>
 	            document.getElementById('skillsContent').style.display = tab === 'skills' ? 'block' : 'none';
 	            document.getElementById('artifactsContent').style.display = tab === 'artifacts' ? 'block' : 'none';
 	            document.getElementById('commandsContent').style.display = tab === 'commands' ? 'block' : 'none';
+	            document.getElementById('promptsContent').style.display = tab === 'prompts' ? 'block' : 'none';
 	            document.getElementById('scriptsContent').style.display = tab === 'scripts' ? 'block' : 'none';
 	            document.getElementById('sessionsContent').style.display = tab === 'sessions' ? 'block' : 'none';
 
@@ -4731,6 +5045,8 @@ Instructions for Claude on how to use this skill..."></textarea>
 	                loadArtifacts();
 	            } else if (tab === 'commands') {
 	                loadCommands();
+	            } else if (tab === 'prompts') {
+	                loadPromptFiles();
 	            } else if (tab === 'scripts') {
 	                loadScripts();
 	            } else {
@@ -4751,6 +5067,8 @@ Instructions for Claude on how to use this skill..."></textarea>
 	                loadArtifacts();
 	            } else if (currentExplorerTab === 'commands') {
 	                loadCommands();
+	            } else if (currentExplorerTab === 'prompts') {
+	                loadPromptFiles();
 	            } else if (currentExplorerTab === 'scripts') {
 	                loadScripts();
 	            } else {
@@ -5180,10 +5498,7 @@ Instructions for Claude on how to use this skill..."></textarea>
                 statusEl.className = 'api-status disconnected';
                 statusText.textContent = 'API URL not set';
                 renderSkills([]);
-                promptsCache = [];
-                promptDisplayNames = {};
-                promptDescriptions = {};
-                renderPromptOptions();
+                resetPromptCache();
                 return;
             }
 
@@ -5191,10 +5506,7 @@ Instructions for Claude on how to use this skill..."></textarea>
                 statusEl.className = 'api-status disconnected';
                 statusText.textContent = 'Not connected';
                 renderSkills([]);
-                promptsCache = [];
-                promptDisplayNames = {};
-                promptDescriptions = {};
-                renderPromptOptions();
+                resetPromptCache();
                 return;
             }
 
@@ -5210,19 +5522,13 @@ Instructions for Claude on how to use this skill..."></textarea>
                     statusEl.className = 'api-status disconnected';
                     statusText.textContent = 'Connection failed';
                     renderSkills([]);
-                    promptsCache = [];
-                    promptDisplayNames = {};
-                    promptDescriptions = {};
-                    renderPromptOptions();
+                    resetPromptCache();
                 }
             } catch {
                 statusEl.className = 'api-status disconnected';
                 statusText.textContent = 'Connection failed';
                 renderSkills([]);
-                promptsCache = [];
-                promptDisplayNames = {};
-                promptDescriptions = {};
-                renderPromptOptions();
+                resetPromptCache();
             }
             updateSendButton();
         }
