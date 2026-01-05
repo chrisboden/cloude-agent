@@ -55,6 +55,34 @@ if [ -f "$DEFAULT_CLAUDE_MD_SRC" ]; then
     cp -n "$DEFAULT_CLAUDE_MD_SRC" "$WORKSPACE_DIR/.claude/CLAUDE.md" 2>/dev/null || true
 fi
 
+# Initialize a workspace git repo and seed a default .gitignore (non-destructive).
+if command -v git >/dev/null 2>&1; then
+    if ! git -C "$WORKSPACE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        git -C "$WORKSPACE_DIR" init >/dev/null 2>&1 || true
+    fi
+
+    if [ ! -f "$WORKSPACE_DIR/.gitignore" ]; then
+        cat > "$WORKSPACE_DIR/.gitignore" <<'EOF'
+artifacts/
+.claude-home/
+session-debug/
+.env
+.env.*
+*.log
+.DS_Store
+EOF
+    fi
+
+    if git -C "$WORKSPACE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        if ! git -C "$WORKSPACE_DIR" config --get user.name >/dev/null 2>&1; then
+            git -C "$WORKSPACE_DIR" config user.name "Cloude Agent"
+        fi
+        if ! git -C "$WORKSPACE_DIR" config --get user.email >/dev/null 2>&1; then
+            git -C "$WORKSPACE_DIR" config user.email "agent@cloude.local"
+        fi
+    fi
+fi
+
 # Make all skill scripts executable
 find "$SKILLS_DIR" -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 find "$SKILLS_DIR" -name "*.py" -exec chmod +x {} \; 2>/dev/null || true
