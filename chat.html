@@ -1938,7 +1938,7 @@
 
             <div class="chat-container" id="chatContainer">
                 <div class="welcome" id="welcome">
-                    <h1>Welcome to Clawed</h1>
+                    <h1>Welcome to Cloude Agent</h1>
                     <p>A cloud-hosted version of the Claude Code Agent.</p>
                 </div>
                 <div class="messages" id="messages"></div>
@@ -1953,7 +1953,7 @@
                                 <textarea 
                                     class="message-input" 
                                     id="messageInput" 
-                                    placeholder="Message Clawed..."
+                                    placeholder="Message Cloude Agent..."
                                     rows="1"
                                 ></textarea>
                                 <div class="input-actions">
@@ -5808,7 +5808,7 @@ Instructions for Claude on how to use this skill..."></textarea>
                 <div class="message assistant" id="${loadingId}">
                     <div class="message-header">
                         <div class="message-avatar">C</div>
-                        <div class="message-role">Clawed</div>
+                        <div class="message-role">Cloude Agent</div>
                     </div>
                     <div class="loading">
                         <div class="loading-dots">
@@ -5905,7 +5905,7 @@ Instructions for Claude on how to use this skill..."></textarea>
                     <div class="message assistant" id="${assistantMsgId}" data-markdown="">
                         <div class="message-header">
                             <div class="message-avatar">C</div>
-                            <div class="message-role">Clawed${modelBadgeLabel ? `<span class="model-badge">${escapeHtml(modelBadgeLabel)}</span>` : ''}</div>
+                            <div class="message-role">Cloude Agent${modelBadgeLabel ? `<span class="model-badge">${escapeHtml(modelBadgeLabel)}</span>` : ''}</div>
                             <div class="message-actions">
                                 <button class="copy-btn" id="${assistantMsgId}-copy" onclick="copyMessageMarkdown('${assistantMsgId}')">Copy</button>
                             </div>
@@ -6079,7 +6079,7 @@ Instructions for Claude on how to use this skill..."></textarea>
             const isUser = msg.role === 'user';
             const messageId = msg.id || ('msg-' + Date.now() + '-' + Math.random().toString(36).slice(2));
             const avatar = isUser ? 'U' : 'C';
-            const role = isUser ? 'You' : 'Clawed';
+            const role = isUser ? 'You' : 'Cloude Agent';
             const markdown = msg.content || '';
             const content = formatContent(markdown);
             const encodedMarkdown = encodeURIComponent(markdown);
