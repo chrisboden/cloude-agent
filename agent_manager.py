@@ -22,6 +22,7 @@ import subprocess
 import platform
 import sys
 import importlib.metadata as importlib_metadata
+import fnmatch
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
@@ -175,6 +176,19 @@ def _is_sensitive_env_key(key: str) -> bool:
     return False
 
 
+def _is_sensitive_key(key: str) -> bool:
+    if not key:
+        return False
+    upper = key.upper()
+    if _is_sensitive_env_key(upper):
+        return True
+    if "OAUTH" in upper or "AUTH_TOKEN" in upper:
+        return True
+    if "ACCESS_TOKEN" in upper or "REFRESH_TOKEN" in upper:
+        return True
+    return False
+
+
 def _redact_settings_payload(payload: Any) -> Any:
     if isinstance(payload, dict):
         redacted: dict[str, Any] = {}
@@ -192,6 +206,20 @@ def _redact_settings_payload(payload: Any) -> Any:
         return redacted
     if isinstance(payload, list):
         return [_redact_settings_payload(item) for item in payload]
+    return payload
+
+
+def _redact_sensitive_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        redacted: dict[str, Any] = {}
+        for key, value in payload.items():
+            if _is_sensitive_key(key):
+                redacted[key] = "<redacted>"
+            else:
+                redacted[key] = _redact_sensitive_payload(value)
+        return redacted
+    if isinstance(payload, list):
+        return [_redact_sensitive_payload(item) for item in payload]
     return payload
 
 
@@ -215,7 +243,7 @@ def _path_debug_info(path: Path) -> dict[str, Any]:
     return info
 
 
-def _settings_file_debug(path: Path) -> dict[str, Any]:
+def _settings_file_debug(path: Path, *, redactor=_redact_settings_payload) -> dict[str, Any]:
     info: dict[str, Any] = {"path": str(path)}
     try:
         stat_info = path.stat()
@@ -255,7 +283,7 @@ def _settings_file_debug(path: Path) -> dict[str, Any]:
                 try:
                     payload = json.loads(raw_bytes.decode("utf-8"))
                     info["parse_ok"] = True
-                    info["payload"] = _redact_settings_payload(payload)
+                    info["payload"] = redactor(payload)
                 except Exception as exc:
                     info["parse_ok"] = False
                     info["parse_error"] = str(exc)
@@ -283,6 +311,64 @@ def _match_bash_rules(rules: list[str], command: str) -> list[dict[str, str]]:
         if command.startswith(prefix):
             matches.append({"rule": rule, "prefix": prefix})
     return matches
+
+
+def _path_candidates(raw_path: Optional[str]) -> list[str]:
+    if not raw_path:
+        return []
+    candidates = [raw_path]
+    try:
+        resolved = str(Path(raw_path).expanduser().resolve())
+        if resolved not in candidates:
+            candidates.append(resolved)
+        try:
+            rel = str(Path(resolved).relative_to(WORKSPACE_DIR.resolve()))
+            if rel not in candidates:
+                candidates.append(rel)
+            dotted = f"./{rel}"
+            if dotted not in candidates:
+                candidates.append(dotted)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return candidates
+
+
+def _match_rule(tool: str, input_data: dict, rule: str) -> bool:
+    if rule == tool:
+        return True
+    prefix = f"{tool}("
+    if not rule.startswith(prefix) or not rule.endswith(")"):
+        return False
+    pattern = rule[len(prefix):-1]
+    if tool == "Bash":
+        command = input_data.get("command") or ""
+        return command.startswith(pattern)
+    if tool in {"Read", "Write", "Edit"}:
+        file_path = input_data.get("file_path") or input_data.get("path") or ""
+        if not file_path:
+            return False
+        patterns = [pattern]
+        if pattern.startswith("./"):
+            patterns.append(pattern[2:])
+        for candidate in _path_candidates(file_path):
+            for candidate_pattern in patterns:
+                if fnmatch.fnmatch(candidate, candidate_pattern):
+                    return True
+        return False
+    return False
+
+
+def _summarize_tool_input(tool: str, input_data: dict) -> str:
+    if not isinstance(input_data, dict):
+        return ""
+    if tool == "Bash":
+        return str(input_data.get("command") or "")
+    for key in ("file_path", "path", "url", "command"):
+        if key in input_data:
+            return str(input_data.get(key) or "")
+    return ""
 
 
 async def _collect_query_events(
@@ -457,6 +543,74 @@ class AgentManager:
             return None
         return str(target)
 
+    def _build_permission_handler(
+        self,
+        *,
+        user_session_id: str,
+        context: Optional[dict],
+        permission_mode: Optional[str],
+        settings_payload: Optional[dict],
+    ):
+        permissions = {}
+        if isinstance(settings_payload, dict):
+            permissions = settings_payload.get("permissions") if isinstance(settings_payload.get("permissions"), dict) else {}
+        allow_list = permissions.get("allow") if isinstance(permissions.get("allow"), list) else []
+        ask_list = permissions.get("ask") if isinstance(permissions.get("ask"), list) else []
+        deny_list = permissions.get("deny") if isinstance(permissions.get("deny"), list) else []
+        source = (context or {}).get("source") or "unknown"
+
+        async def can_use_tool(tool: str, input_data: dict) -> bool:
+            if permission_mode == "bypassPermissions":
+                logger.info(
+                    "Permission decision: session=%s source=%s tool=%s decision=allow reason=bypassPermissions",
+                    user_session_id,
+                    source,
+                    tool,
+                )
+                return True
+
+            matched_rule = None
+            decision = "deny"
+            reason = "no_match"
+
+            for rule in deny_list:
+                if _match_rule(tool, input_data or {}, rule):
+                    matched_rule = rule
+                    decision = "deny"
+                    reason = "deny_rule"
+                    break
+
+            if matched_rule is None:
+                for rule in allow_list:
+                    if _match_rule(tool, input_data or {}, rule):
+                        matched_rule = rule
+                        decision = "allow"
+                        reason = "allow_rule"
+                        break
+
+            if matched_rule is None:
+                for rule in ask_list:
+                    if _match_rule(tool, input_data or {}, rule):
+                        matched_rule = rule
+                        decision = "deny"
+                        reason = "ask_rule"
+                        break
+
+            summary = _summarize_tool_input(tool, input_data or {})
+            logger.info(
+                "Permission decision: session=%s source=%s tool=%s decision=%s reason=%s rule=%s input=%s",
+                user_session_id,
+                source,
+                tool,
+                decision,
+                reason,
+                matched_rule,
+                summary,
+            )
+            return decision == "allow"
+
+        return can_use_tool
+
     def get_debug_info(
         self,
         *,
@@ -518,6 +672,7 @@ class AgentManager:
         settings_path = WORKSPACE_DIR / ".claude" / "settings.json"
         local_path = WORKSPACE_DIR / ".claude" / "settings.local.json"
         user_path = Path.home() / ".claude" / "settings.json"
+        user_state_path = Path.home() / ".claude.json"
         managed_paths = [
             Path("/etc/claude-code/managed-settings.json"),
             Path("/Library/Application Support/ClaudeCode/managed-settings.json"),
@@ -529,8 +684,12 @@ class AgentManager:
             "project": _settings_file_debug(settings_path),
             "local": _settings_file_debug(local_path),
             "user": _settings_file_debug(user_path),
+            "user_state": _settings_file_debug(user_state_path, redactor=_redact_sensitive_payload),
             "managed": [_settings_file_debug(path) for path in managed_paths],
             "settings_cache_paths": {key: str(path) for key, path in self._settings_cache_paths.items()},
+        }
+        settings_info["settings_cache"] = {
+            key: _settings_file_debug(path) for key, path in self._settings_cache_paths.items()
         }
 
         merged_settings_raw = self._load_project_settings()
@@ -814,11 +973,18 @@ class AgentManager:
         # don't hang on approval prompts (e.g., command helpers like save_transcript.py).
         settings_json: Optional[str] = None
         settings_path: Optional[str] = None
+        settings_payload: Optional[dict[str, Any]] = None
         if (context or {}).get("source") == "webhook":
             settings_json = self._build_webhook_settings()
+            try:
+                settings_payload = json.loads(settings_json)
+            except Exception:
+                logger.exception("Failed to parse webhook settings override")
             settings_path = self._write_settings_cache(settings_json, cache_key="webhook")
         else:
-            settings_json = self._load_project_settings(include_local=False)
+            settings_payload = self._load_project_settings_payload(include_local=False)
+            if settings_payload:
+                settings_json = json.dumps(settings_payload)
             settings_path = self._write_settings_cache(settings_json, cache_key="default")
         
         interrupt_note = await self._consume_interrupt_note(user_session_id)
@@ -836,6 +1002,12 @@ class AgentManager:
             }
         # Always load project settings so permissions/skills apply even with prompt overrides.
         setting_sources = list(_DEFAULT_SETTING_SOURCES)
+        permission_handler = self._build_permission_handler(
+            user_session_id=user_session_id,
+            context=context,
+            permission_mode=permission_mode,
+            settings_payload=settings_payload,
+        )
         options = ClaudeAgentOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
@@ -844,6 +1016,7 @@ class AgentManager:
             settings=settings_path,
             system_prompt=system_prompt,
             setting_sources=setting_sources,
+            can_use_tool=permission_handler,
         )
         
         # query() enables Claude Code preprocessing for slash commands and !` bash execution.
@@ -959,11 +1132,18 @@ class AgentManager:
 
         settings_json: Optional[str] = None
         settings_path: Optional[str] = None
+        settings_payload: Optional[dict[str, Any]] = None
         if (context or {}).get("source") == "webhook":
             settings_json = self._build_webhook_settings()
+            try:
+                settings_payload = json.loads(settings_json)
+            except Exception:
+                logger.exception("Failed to parse webhook settings override")
             settings_path = self._write_settings_cache(settings_json, cache_key="webhook")
         else:
-            settings_json = self._load_project_settings(include_local=False)
+            settings_payload = self._load_project_settings_payload(include_local=False)
+            if settings_payload:
+                settings_json = json.dumps(settings_payload)
             settings_path = self._write_settings_cache(settings_json, cache_key="default")
         
         interrupt_note = await self._consume_interrupt_note(user_session_id)
@@ -981,6 +1161,12 @@ class AgentManager:
             }
         # Always load project settings so permissions/skills apply even with prompt overrides.
         setting_sources = list(_DEFAULT_SETTING_SOURCES)
+        permission_handler = self._build_permission_handler(
+            user_session_id=user_session_id,
+            context=context,
+            permission_mode=permission_mode,
+            settings_payload=settings_payload,
+        )
         options = ClaudeAgentOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
@@ -989,6 +1175,7 @@ class AgentManager:
             settings=settings_path,
             system_prompt=system_prompt,
             setting_sources=setting_sources,
+            can_use_tool=permission_handler,
         )
         
         # Signal that we're starting
