@@ -307,6 +307,20 @@ class AgentManager:
         self.conversation_histories: dict[str, list[dict]] = {}
         self._active_streams: dict[str, ClaudeSDKClient] = {}
         self._active_streams_lock = asyncio.Lock()
+        self._settings_cache_paths = {
+            "default": Path(
+                os.environ.get(
+                    "CLAUDE_SETTINGS_CACHE_PATH",
+                    f"/tmp/claude-settings-{os.getpid()}.json",
+                )
+            ),
+            "webhook": Path(
+                os.environ.get(
+                    "CLAUDE_WEBHOOK_SETTINGS_CACHE_PATH",
+                    f"/tmp/claude-settings-webhook-{os.getpid()}.json",
+                )
+            ),
+        }
         # Ensure skills and commands directories exist
         SKILLS_DIR.mkdir(parents=True, exist_ok=True)
         COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
@@ -402,12 +416,16 @@ class AgentManager:
             raise ValueError(f"Prompt '{prompt_id}' is empty")
         return body
 
-    def _load_project_settings(self) -> Optional[str]:
+    def _load_project_settings_payload(self, *, include_local: bool = True) -> dict[str, Any]:
         settings_path = WORKSPACE_DIR / ".claude" / "settings.json"
         local_path = WORKSPACE_DIR / ".claude" / "settings.local.json"
         merged: dict[str, Any] = {}
 
-        for candidate in (settings_path, local_path):
+        candidates = [settings_path]
+        if include_local:
+            candidates.append(local_path)
+
+        for candidate in candidates:
             if not candidate.is_file():
                 continue
             try:
@@ -418,9 +436,26 @@ class AgentManager:
             if isinstance(payload, dict):
                 merged = _merge_settings(merged, payload)
 
+        return merged
+
+    def _load_project_settings(self, *, include_local: bool = True) -> Optional[str]:
+        merged = self._load_project_settings_payload(include_local=include_local)
         if not merged:
             return None
         return json.dumps(merged)
+
+    def _write_settings_cache(self, settings_json: Optional[str], *, cache_key: str) -> Optional[str]:
+        if not settings_json:
+            return None
+        target = self._settings_cache_paths.get(cache_key)
+        if not target:
+            return None
+        try:
+            target.write_text(settings_json, encoding="utf-8")
+        except Exception:
+            logger.exception("Failed to write settings cache %s", target)
+            return None
+        return str(target)
 
     def get_debug_info(
         self,
@@ -495,6 +530,7 @@ class AgentManager:
             "local": _settings_file_debug(local_path),
             "user": _settings_file_debug(user_path),
             "managed": [_settings_file_debug(path) for path in managed_paths],
+            "settings_cache_paths": {key: str(path) for key, path in self._settings_cache_paths.items()},
         }
 
         merged_settings_raw = self._load_project_settings()
@@ -507,6 +543,16 @@ class AgentManager:
                 settings_info["merged_project_local_error"] = str(exc)
         else:
             settings_info["merged_project_local"] = None
+
+        project_only_raw = self._load_project_settings(include_local=False)
+        if project_only_raw:
+            try:
+                project_only_payload = json.loads(project_only_raw)
+                settings_info["project_only"] = _redact_settings_payload(project_only_payload)
+            except Exception as exc:
+                settings_info["project_only_error"] = str(exc)
+        else:
+            settings_info["project_only"] = None
 
         permissions_summary: dict[str, Any] = {}
         if isinstance(merged_settings_payload, dict):
@@ -557,6 +603,8 @@ class AgentManager:
                 options_preview["settings_override"] = _redact_settings_payload(webhook_payload)
             except Exception as exc:
                 options_preview["settings_override_error"] = str(exc)
+        else:
+            options_preview["settings_override"] = settings_info.get("project_only")
 
         debug["permissions"] = permissions_debug
         debug["options_preview"] = options_preview
@@ -764,9 +812,14 @@ class AgentManager:
 
         # Webhook runs are non-interactive; ensure required permission rules are present so we
         # don't hang on approval prompts (e.g., command helpers like save_transcript.py).
-        settings: Optional[str] = None
+        settings_json: Optional[str] = None
+        settings_path: Optional[str] = None
         if (context or {}).get("source") == "webhook":
-            settings = self._build_webhook_settings()
+            settings_json = self._build_webhook_settings()
+            settings_path = self._write_settings_cache(settings_json, cache_key="webhook")
+        else:
+            settings_json = self._load_project_settings(include_local=False)
+            settings_path = self._write_settings_cache(settings_json, cache_key="default")
         
         interrupt_note = await self._consume_interrupt_note(user_session_id)
         prompt_override = self._load_prompt_override((context or {}).get("prompt_id"))
@@ -788,7 +841,7 @@ class AgentManager:
             cwd=str(WORKSPACE_DIR),
             model=(model or None),
             resume=resume_session_id,
-            settings=settings,
+            settings=settings_path,
             system_prompt=system_prompt,
             setting_sources=setting_sources,
         )
@@ -904,9 +957,14 @@ class AgentManager:
         # Default to acceptEdits (safer), can override to bypassPermissions via API
         permission_mode = self._resolve_permission_mode(context)
 
-        settings: Optional[str] = None
+        settings_json: Optional[str] = None
+        settings_path: Optional[str] = None
         if (context or {}).get("source") == "webhook":
-            settings = self._build_webhook_settings()
+            settings_json = self._build_webhook_settings()
+            settings_path = self._write_settings_cache(settings_json, cache_key="webhook")
+        else:
+            settings_json = self._load_project_settings(include_local=False)
+            settings_path = self._write_settings_cache(settings_json, cache_key="default")
         
         interrupt_note = await self._consume_interrupt_note(user_session_id)
         prompt_override = self._load_prompt_override((context or {}).get("prompt_id"))
@@ -928,7 +986,7 @@ class AgentManager:
             cwd=str(WORKSPACE_DIR),
             model=(model or None),
             resume=resume_session_id,
-            settings=settings,
+            settings=settings_path,
             system_prompt=system_prompt,
             setting_sources=setting_sources,
         )
