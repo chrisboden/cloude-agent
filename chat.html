@@ -2113,8 +2113,9 @@ Instructions for Claude on how to use this skill..."></textarea>
 	                <button class="explorer-tab active" id="tabArtifacts" onclick="switchExplorerTab('artifacts')">Artifacts</button>
 	                <button class="explorer-tab" id="tabCommands" onclick="switchExplorerTab('commands')">Commands</button>
 	                <button class="explorer-tab" id="tabPrompts" onclick="switchExplorerTab('prompts')">Prompts</button>
-	                <button class="explorer-tab" id="tabScripts" onclick="switchExplorerTab('scripts')">Scripts</button>
-	                <button class="explorer-tab" id="tabSessions" onclick="switchExplorerTab('sessions')">Sessions</button>
+                <button class="explorer-tab" id="tabScripts" onclick="switchExplorerTab('scripts')">Scripts</button>
+                <button class="explorer-tab" id="tabSettings" onclick="switchExplorerTab('settings')">Settings</button>
+                <button class="explorer-tab" id="tabSessions" onclick="switchExplorerTab('sessions')">Sessions</button>
 	            </div>
 	            <div style="display: flex; gap: 8px;">
 	                <button class="artifacts-refresh-btn" id="explorerRefreshBtn" onclick="refreshCurrentTab()">
@@ -2214,10 +2215,10 @@ Instructions for Claude on how to use this skill..."></textarea>
 	                    <p>Prompt overrides stored under <code>prompts/</code></p>
 	                </div>
 	            </div>
-	            <!-- Scripts Tab Content -->
-	            <div id="scriptsContent" style="display: none;">
-	                <div class="artifacts-empty">
-	                    <div class="artifacts-empty-icon">
+            <!-- Scripts Tab Content -->
+            <div id="scriptsContent" style="display: none;">
+                <div class="artifacts-empty">
+                    <div class="artifacts-empty-icon">
 	                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
 	                            <path d="M4 19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2z"></path>
 	                            <polyline points="14 2 14 8 20 8"></polyline>
@@ -2225,13 +2226,26 @@ Instructions for Claude on how to use this skill..."></textarea>
 	                            <line x1="8" y1="17" x2="16" y2="17"></line>
 	                        </svg>
 	                    </div>
-	                    <h3>Scripts</h3>
-	                    <p>Helper scripts stored under <code>.claude/scripts/</code></p>
-	                </div>
-	            </div>
-	            <!-- Sessions Tab Content -->
-	            <div id="sessionsContent" style="display: none;">
-	                <div class="artifacts-empty">
+                    <h3>Scripts</h3>
+                    <p>Helper scripts stored under <code>.claude/scripts/</code></p>
+                </div>
+            </div>
+            <!-- Settings Tab Content -->
+            <div id="settingsContent" style="display: none;">
+                <div class="artifacts-empty">
+                    <div class="artifacts-empty-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                    </div>
+                    <h3>Settings</h3>
+                    <p>View and edit the runtime settings on the workspace volume.</p>
+                </div>
+            </div>
+            <!-- Sessions Tab Content -->
+            <div id="sessionsContent" style="display: none;">
+                <div class="artifacts-empty">
 	                    <div class="artifacts-empty-icon">
 	                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -4688,19 +4702,176 @@ Instructions for Claude on how to use this skill..."></textarea>
 	            await openTextEditor(path, title, { containerId: 'scriptsContent', onBack: loadScripts });
 	        }
 
-	        async function deleteScriptWorkspaceFile(encodedPath) {
-	            const path = decodeURIComponent(encodedPath || '');
-	            if (!path) return;
-	            if (!confirm(`Delete "${path}"?`)) return;
-	            const ok = await deleteWorkspaceItem(path);
-	            if (!ok) return;
-	            await loadScripts();
-	        }
+        async function deleteScriptWorkspaceFile(encodedPath) {
+            const path = decodeURIComponent(encodedPath || '');
+            if (!path) return;
+            if (!confirm(`Delete "${path}"?`)) return;
+            const ok = await deleteWorkspaceItem(path);
+            if (!ok) return;
+            await loadScripts();
+        }
 
-	        function handleTextEditorBack() {
-	            disposeMonacoEditor();
-	            if (typeof currentEditorOnBack === 'function') {
-	                currentEditorOnBack();
+        async function loadSettingsFiles() {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) {
+                renderSettingsEmpty('Enter your API key in Settings to view and edit.');
+                return;
+            }
+
+            const contentEl = document.getElementById('settingsContent');
+            contentEl.innerHTML = '<div class="artifacts-empty"><p>Loading...</p></div>';
+
+            const [projectFiles, userFiles] = await Promise.all([
+                fetchWorkspaceListing('.claude', apiKey),
+                fetchWorkspaceListing('.claude-home', apiKey),
+            ]);
+
+            const projectIndex = indexWorkspaceFiles(projectFiles);
+            const userIndex = indexWorkspaceFiles(userFiles);
+
+            const items = [
+                {
+                    label: 'Project settings',
+                    path: '.claude/settings.json',
+                    hint: 'Project scope (merged after user settings).',
+                    exists: workspaceFileExists(projectIndex, 'settings.json'),
+                },
+                {
+                    label: 'User settings',
+                    path: '.claude-home/settings.json',
+                    hint: 'User scope (~/.claude) merged first.',
+                    exists: workspaceFileExists(userIndex, 'settings.json'),
+                },
+                {
+                    label: 'Local overrides',
+                    path: '.claude/settings.local.json',
+                    hint: 'Optional overrides (merged last).',
+                    exists: workspaceFileExists(projectIndex, 'settings.local.json'),
+                },
+            ];
+
+            renderSettingsList(items);
+        }
+
+        async function fetchWorkspaceListing(basePath, apiKey) {
+            try {
+                const response = await fetch(`${API_URL}/workspace?path=${encodeURIComponent(basePath)}`, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+                if (!response.ok) {
+                    return null;
+                }
+                const data = await response.json();
+                return data.files || [];
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function indexWorkspaceFiles(files) {
+            if (!Array.isArray(files)) return null;
+            const index = new Map();
+            for (const file of files) {
+                if (file && typeof file.name === 'string') {
+                    index.set(file.name, file);
+                }
+            }
+            return index;
+        }
+
+        function workspaceFileExists(index, name) {
+            if (!index) return null;
+            const entry = index.get(name);
+            if (!entry) return false;
+            return !entry.is_dir;
+        }
+
+        function renderSettingsEmpty(message) {
+            const contentEl = document.getElementById('settingsContent');
+            contentEl.innerHTML = `
+                <div class="artifacts-empty">
+                    <div class="artifacts-empty-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                    </div>
+                    <h3>Settings</h3>
+                    <p>${escapeHtml(message || 'Settings files are stored on the workspace volume.')}</p>
+                </div>
+            `;
+        }
+
+        function renderSettingsList(items) {
+            const contentEl = document.getElementById('settingsContent');
+            let html = `
+                <div class="skills-pane-header" style="margin-bottom: 12px;">
+                    <div>
+                        <div class="skills-pane-title">Settings</div>
+                        <div class="skills-pane-subtitle">Merged from user → project → local (lists are unioned).</div>
+                    </div>
+                    <div class="skills-pane-actions">
+                        <button class="artifacts-refresh-btn" onclick="promptOpenWorkspaceFile()">Open file path</button>
+                    </div>
+                </div>
+                <div class="artifacts-tree">
+            `;
+
+            if (!items || items.length === 0) {
+                html += '<div class="artifacts-empty" style="padding: 24px;"><p>(no settings entries)</p></div>';
+                html += '</div>';
+                contentEl.innerHTML = html;
+                return;
+            }
+
+            for (const item of items) {
+                const exists = item.exists;
+                const status = exists === true ? 'present' : exists === false ? 'missing' : 'unknown';
+                const editBtn = exists === false ? '' : `
+                        <button class="artifacts-file-btn" onclick="editSettingsWorkspaceFile('${encodeURIComponent(item.path)}', '${encodeURIComponent(item.label)}')" title="Edit">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            </svg>
+                        </button>
+                `;
+                const hintLine = item.hint ? `<div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(item.hint)}</div>` : '';
+
+                html += `
+                    <div class="artifacts-file">
+                        <div class="artifacts-file-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                            </svg>
+                        </div>
+                        <div class="artifacts-file-info">
+                            <span class="artifacts-file-name">${escapeHtml(item.label)}</span>
+                            <div class="artifacts-file-url">${escapeHtml(item.path)} • ${escapeHtml(status)}</div>
+                            ${hintLine}
+                        </div>
+                        <div class="artifacts-file-actions">
+                            ${editBtn}
+                        </div>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            contentEl.innerHTML = html;
+        }
+
+        async function editSettingsWorkspaceFile(encodedPath, encodedTitle) {
+            const path = decodeURIComponent(encodedPath || '');
+            const title = decodeURIComponent(encodedTitle || '') || path;
+            if (!path) return;
+            await openTextEditor(path, title, { containerId: 'settingsContent', onBack: loadSettingsFiles, allowRename: false });
+        }
+
+        function handleTextEditorBack() {
+            disposeMonacoEditor();
+            if (typeof currentEditorOnBack === 'function') {
+                currentEditorOnBack();
 	            }
         }
 
@@ -5017,20 +5188,22 @@ Instructions for Claude on how to use this skill..."></textarea>
 	            // Update tab buttons
 	            document.getElementById('tabClaudeMd').classList.toggle('active', tab === 'claude');
 	            document.getElementById('tabSkills').classList.toggle('active', tab === 'skills');
-	            document.getElementById('tabArtifacts').classList.toggle('active', tab === 'artifacts');
-	            document.getElementById('tabCommands').classList.toggle('active', tab === 'commands');
-	            document.getElementById('tabPrompts').classList.toggle('active', tab === 'prompts');
-	            document.getElementById('tabScripts').classList.toggle('active', tab === 'scripts');
-	            document.getElementById('tabSessions').classList.toggle('active', tab === 'sessions');
+            document.getElementById('tabArtifacts').classList.toggle('active', tab === 'artifacts');
+            document.getElementById('tabCommands').classList.toggle('active', tab === 'commands');
+            document.getElementById('tabPrompts').classList.toggle('active', tab === 'prompts');
+            document.getElementById('tabScripts').classList.toggle('active', tab === 'scripts');
+            document.getElementById('tabSettings').classList.toggle('active', tab === 'settings');
+            document.getElementById('tabSessions').classList.toggle('active', tab === 'sessions');
 
 	            // Show/hide content
 	            document.getElementById('claudeContent').style.display = tab === 'claude' ? 'block' : 'none';
 	            document.getElementById('skillsContent').style.display = tab === 'skills' ? 'block' : 'none';
 	            document.getElementById('artifactsContent').style.display = tab === 'artifacts' ? 'block' : 'none';
-	            document.getElementById('commandsContent').style.display = tab === 'commands' ? 'block' : 'none';
-	            document.getElementById('promptsContent').style.display = tab === 'prompts' ? 'block' : 'none';
-	            document.getElementById('scriptsContent').style.display = tab === 'scripts' ? 'block' : 'none';
-	            document.getElementById('sessionsContent').style.display = tab === 'sessions' ? 'block' : 'none';
+            document.getElementById('commandsContent').style.display = tab === 'commands' ? 'block' : 'none';
+            document.getElementById('promptsContent').style.display = tab === 'prompts' ? 'block' : 'none';
+            document.getElementById('scriptsContent').style.display = tab === 'scripts' ? 'block' : 'none';
+            document.getElementById('settingsContent').style.display = tab === 'settings' ? 'block' : 'none';
+            document.getElementById('sessionsContent').style.display = tab === 'sessions' ? 'block' : 'none';
 
 	            // Load content
 	            if (tab === 'claude') {
@@ -5047,12 +5220,14 @@ Instructions for Claude on how to use this skill..."></textarea>
 	                loadCommands();
 	            } else if (tab === 'prompts') {
 	                loadPromptFiles();
-	            } else if (tab === 'scripts') {
-	                loadScripts();
-	            } else {
-	                loadSessions();
-	            }
-	        }
+            } else if (tab === 'scripts') {
+                loadScripts();
+            } else if (tab === 'settings') {
+                loadSettingsFiles();
+            } else {
+                loadSessions();
+            }
+        }
 
 	        function refreshCurrentTab() {
 	            if (currentExplorerTab === 'claude') {
@@ -5069,11 +5244,13 @@ Instructions for Claude on how to use this skill..."></textarea>
 	                loadCommands();
 	            } else if (currentExplorerTab === 'prompts') {
 	                loadPromptFiles();
-	            } else if (currentExplorerTab === 'scripts') {
-	                loadScripts();
-	            } else {
-	                if (currentViewingSession) {
-	                    loadSessionDetail(currentViewingSession);
+            } else if (currentExplorerTab === 'scripts') {
+                loadScripts();
+            } else if (currentExplorerTab === 'settings') {
+                loadSettingsFiles();
+            } else {
+                if (currentViewingSession) {
+                    loadSessionDetail(currentViewingSession);
 	                } else {
 	                    loadSessions();
                 }
