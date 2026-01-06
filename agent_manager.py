@@ -442,7 +442,6 @@ class AgentManager:
         
         interrupt_note = await self._consume_interrupt_note(user_session_id)
         prompt_override = self._load_prompt_override((context or {}).get("prompt_id"))
-        use_project_setting_source = prompt_override is None
         # Set working directory to workspace for file operations and for discovering .claude/commands/ etc.
         project_context = prompt_override or self._load_project_context()
         append_system_prompt_parts = [part for part in (project_context, interrupt_note) if part]
@@ -454,11 +453,8 @@ class AgentManager:
                 "preset": "claude_code",
                 "append": append_system_prompt,
             }
+        # Always load project settings so permissions/skills apply even with prompt overrides.
         setting_sources = list(_DEFAULT_SETTING_SOURCES)
-        if not use_project_setting_source and "project" in setting_sources:
-            setting_sources.remove("project")
-        if not settings and not use_project_setting_source:
-            settings = self._load_project_settings()
         options = ClaudeAgentOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
@@ -586,7 +582,6 @@ class AgentManager:
         
         interrupt_note = await self._consume_interrupt_note(user_session_id)
         prompt_override = self._load_prompt_override((context or {}).get("prompt_id"))
-        use_project_setting_source = prompt_override is None
         # Set working directory to workspace for file operations and for discovering .claude/commands/ etc.
         project_context = prompt_override or self._load_project_context()
         append_system_prompt_parts = [part for part in (project_context, interrupt_note) if part]
@@ -598,11 +593,8 @@ class AgentManager:
                 "preset": "claude_code",
                 "append": append_system_prompt,
             }
+        # Always load project settings so permissions/skills apply even with prompt overrides.
         setting_sources = list(_DEFAULT_SETTING_SOURCES)
-        if not use_project_setting_source and "project" in setting_sources:
-            setting_sources.remove("project")
-        if not settings and not use_project_setting_source:
-            settings = self._load_project_settings()
         options = ClaudeAgentOptions(
             permission_mode=permission_mode,
             cwd=str(WORKSPACE_DIR),
