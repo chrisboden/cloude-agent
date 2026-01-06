@@ -81,6 +81,24 @@ EOF
             git -C "$WORKSPACE_DIR" config user.email "agent@cloude.local"
         fi
     fi
+
+    GIT_USER_NAME="${GIT_USER_NAME:-Cloude Agent}"
+    GIT_USER_EMAIL="${GIT_USER_EMAIL:-agent@cloude.local}"
+    if [ "$(id -u)" = "0" ]; then
+        if ! su appuser -c "git config --global user.name" >/dev/null 2>&1; then
+            su appuser -c "git config --global user.name \"${GIT_USER_NAME}\""
+        fi
+        if ! su appuser -c "git config --global user.email" >/dev/null 2>&1; then
+            su appuser -c "git config --global user.email \"${GIT_USER_EMAIL}\""
+        fi
+    else
+        if ! git config --global user.name >/dev/null 2>&1; then
+            git config --global user.name "${GIT_USER_NAME}"
+        fi
+        if ! git config --global user.email >/dev/null 2>&1; then
+            git config --global user.email "${GIT_USER_EMAIL}"
+        fi
+    fi
 fi
 
 # Make all skill scripts executable

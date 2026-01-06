@@ -1,57 +1,73 @@
 # Project Context
 
-You are the Claude Agent running in the cloud.
-You are deployed on Railway.com (see PUBLIC_BASE_URL)
-Rather than working on a given code repo as a coding agent, you work as a general purpose knowledge work agent.
-Your cwd is a Railway volume mounted at /app/workspace, where you read and write files.
-
-**Artifacts**
-The user values your ability to create high value artifacts for them to use in their work.
-Store files in the /artifacts dir at https://clawed-api-production.up.railway.app/artifacts/<subdir>/<file>
-Artifacts dir is Public and subdirs include. 
-- `debug/` - Debug outputs
-- `designs/` - Design files
-- `notes/` - Processed notes
-- etc
-Keep the artifacts dir organised with well-named subdirs.
-List artifacts/* subdirs before adding new ones.
-Always include a short random hash in your filenames (eg gH6b9j), eg /artifacts/reports/hub_report_2025_gH6b9j.md
-Always return inline links to the artifacts you produce (with clickable urls). Pay attention to the pathing.
-
-
-# Common Issues
-
-Note: If you have tools failing (eg skill invocation), it is likely due to permissions set in settings.json. Inform the user rather than failing silently and offer to update settings (requires bypass permissions checkbox to be ticked).
-
+You are the Cloude Agent.
+Under the hood, you are an instance of Claude Agent running in the cloud.
+You are deployed on Railway.com at https://cloude-agent-production.up.railway.app
+Your cwd is a Railway volume, where you read and write files.
 
 **Top-level structure:**
 - **.claude/** - Claude Code project configuration
   - `CLAUDE.md` - Project context documentation
-  - `commands/` - Slash command definitions (7 commands including query-sessions)
+  - `commands/` - Slash command definitions
+  - `scripts/` - Utility scripts
   - `settings.json` - Settings
   - `skills/` - Custom skills (eg artifacts-builder, canvas-design, skill-creator)
 
-- **scripts/** - Utility scripts (top-level, not in .claude/)
-  - `.claude/scripts/` - Internal scripts used by slash commands
-  - See below for script location guidelines
+- **.claude-home/** - Claude Agent runtime home directory
+  - `debug/` - Debug files for sessions
+  - `plans/` - Planning files
+  - `plugins/` - Plugin configuration
+  - `projects/` - Session data organized by project
+  - `shell-snapshots/` - Shell state snapshots
+  - `statsig/` - Feature flag evaluations
+  - `session-env/` - Session environment (excluded from tree)
+  - `todos/` - Todo items storage (excluded from tree)
+
+- **artifacts/** - Outputs and working files (Public)
+- **lost+found/** - System directory
+- **prompts/** - System instructions to override CLAUDE.md
+
+## Git Hygiene
+
+- Treat `/app/workspace` as the **platform repo**: track changes to `.claude/**`, `prompts/**`, and other global config/docs. Do **not** commit `artifacts/` or `.claude-home/`.
+- Each project under `/app/workspace/artifacts/<project>` should have its **own git repo**. If missing, initialize it with `/.claude/scripts/init_artifact_git.sh <project>`.
+- When making changes:
+  - Use `git -C /app/workspace …` for platform config changes.
+  - Use `git -C /app/workspace/artifacts/<project> …` for project changes.
+- Commit only the files you touched; keep commits small and descriptive. One logical change per commit.
+- Never commit secrets (`.env`, tokens) or large binaries unless explicitly asked.
+- Do not add remotes or push unless the user explicitly requests it.
+
+If git commands are blocked or unavailable, report it and continue without committing.
 
 
 ## Management Tools
 
-Tools to help you self-diagnose issues and debug performance.
-
-### Session Management
+### Session Analysis
 
 **Query Sessions** - `/query-sessions` slash command
 Inspect session data to debug agent behaviour: tool calls, execution errors, missing files, etc.
+
+**Usage:**
 - `/query-sessions -n 5` - Get 5 most recent sessions with metadata
 - `/query-sessions -s <id>` - Get full session data by ID
 
+**Script:** `.claude/scripts/session_query.sh`
+
+**Session metadata includes:**
+- sessionId - Unique session identifier
+- firstUserMessage - First user message (truncated to 100 words)
+- totalMessages - Total message count (user + assistant)
+- firstMessageTimestamp - Session start timestamp
+- lastMessageTimestamp - Session end timestamp
+- model - Claude model used in the session
 
 ### Artifact Management
 
 **List Artifacts** - `/list-artifacts` slash command
 Comprehensive utility for managing and exploring artifact files.
+
+**Usage:**
 - `/list-artifacts` - List all subdirectories with stats
 - `/list-artifacts -d <subdir>` - List files in specific subdirectory
 - `/list-artifacts -f <pattern>` - Search for files by name pattern
@@ -59,18 +75,11 @@ Comprehensive utility for managing and exploring artifact files.
 - `/list-artifacts -r [days]` - Show recent activity (default: 7 days)
 - `/list-artifacts --stats` - Show detailed statistics
 
+**Script:** `.claude/scripts/list_artifacts.sh`
 
-## Development Guidelines
-
-### Script Organization
-
-**Script location:**
-- All scripts go in `.claude/scripts/` (import_skill.sh, list_artifacts.sh, session_query.sh, save_transcript.py, etc.)
-
-**When creating slash commands:**
-- Save the script backing the command to `.claude/scripts/`
-- Scripts in this directory are automatically whitelisted via wildcard in settings.json
-- This enables slash commands to execute without manual approval
-
-**Settings.json permissions:**
-- `Bash(./.claude/scripts/*)` - Allows all scripts in .claude/scripts/ directory
+**Features:**
+- Directory listing with file counts and sizes
+- File name pattern search
+- Content search across all files
+- Recent activity tracking (modified files)
+- Statistics: file types, age distribution, largest files, total counts
