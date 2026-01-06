@@ -18,6 +18,8 @@
       "Bash(bash:./.claude/scripts/*)",
       "Bash(bash:.claude/scripts/*)",
       "Bash(bash:/app/workspace/.claude/scripts/*)",
+      "Bash(bash /app/workspace/.claude/scripts/*)",
+      "Bash(bash /app/workspace/.claude/scripts/*:*)",
       "Bash(bash .claude/scripts/*)",
       "Bash(bash .claude/scripts/*:*)",
       "Bash(bash .claude/skills/)",

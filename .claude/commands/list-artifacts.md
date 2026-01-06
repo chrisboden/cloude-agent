@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(./.claude/scripts/list_artifacts.sh*)
+allowed-tools: Bash(./.claude/scripts/list_artifacts.sh*), Bash(/app/workspace/.claude/scripts/list_artifacts.sh*), Bash(bash .claude/scripts/list_artifacts.sh*), Bash(bash /app/workspace/.claude/scripts/list_artifacts.sh*), Bash(bash:./.claude/scripts/list_artifacts.sh*), Bash(bash:.claude/scripts/list_artifacts.sh*), Bash(bash:/app/workspace/.claude/scripts/list_artifacts.sh*)
 description: List and explore artifact subdirectories (project)
 ---
 

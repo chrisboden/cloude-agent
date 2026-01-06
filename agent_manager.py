@@ -83,7 +83,7 @@ _WEBHOOK_REQUIRED_ALLOW_RULES: list[str] = [
     "Bash(python3 ./.claude/scripts/*:*)",
     "Bash(python3 .claude/scripts/*:*)",
 ]
-_DEFAULT_SETTING_SOURCES = ("user", "project", "local")
+_DEFAULT_SETTING_SOURCES = ("project",)
 _INTERRUPT_TTL_S = 86400 * 7
 
 def _format_query_error(*, stderr_text: str, exc: Exception) -> RuntimeError:
