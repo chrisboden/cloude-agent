@@ -17,6 +17,11 @@ import zipfile
 import tempfile
 import dataclasses
 import io
+import hashlib
+import subprocess
+import platform
+import sys
+import importlib.metadata as importlib_metadata
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
@@ -154,6 +159,132 @@ def _merge_settings(base: Any, overlay: Any) -> Any:
     return overlay
 
 
+_MAX_SETTINGS_BYTES = 1024 * 1024
+
+
+def _is_sensitive_env_key(key: str) -> bool:
+    if not key:
+        return False
+    upper = key.upper()
+    if upper.endswith(("_KEY", "_TOKEN", "_SECRET", "_PASSWORD")):
+        return True
+    if "API_KEY" in upper or "AUTH_TOKEN" in upper or "ACCESS_TOKEN" in upper:
+        return True
+    if "SECRET" in upper or "PASSWORD" in upper:
+        return True
+    return False
+
+
+def _redact_settings_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        redacted: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key == "env" and isinstance(value, dict):
+                env_redacted: dict[str, Any] = {}
+                for env_key, env_value in value.items():
+                    if _is_sensitive_env_key(env_key):
+                        env_redacted[env_key] = "<redacted>"
+                    else:
+                        env_redacted[env_key] = env_value
+                redacted[key] = env_redacted
+                continue
+            redacted[key] = _redact_settings_payload(value)
+        return redacted
+    if isinstance(payload, list):
+        return [_redact_settings_payload(item) for item in payload]
+    return payload
+
+
+def _path_debug_info(path: Path) -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "path": str(path),
+        "exists": path.exists(),
+        "is_file": path.is_file(),
+        "is_dir": path.is_dir(),
+        "is_symlink": path.is_symlink(),
+    }
+    try:
+        info["resolved"] = str(path.resolve())
+    except Exception:
+        pass
+    if info["is_symlink"]:
+        try:
+            info["symlink_target"] = str(path.resolve())
+        except Exception:
+            pass
+    return info
+
+
+def _settings_file_debug(path: Path) -> dict[str, Any]:
+    info: dict[str, Any] = {"path": str(path)}
+    try:
+        stat_info = path.stat()
+    except FileNotFoundError:
+        info["exists"] = False
+        return info
+    except Exception as exc:
+        info["exists"] = False
+        info["error"] = str(exc)
+        return info
+
+    info.update(
+        {
+            "exists": True,
+            "is_file": path.is_file(),
+            "is_dir": path.is_dir(),
+            "is_symlink": path.is_symlink(),
+            "size": stat_info.st_size,
+            "mtime": datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
+            "readable": os.access(path, os.R_OK),
+        }
+    )
+
+    if info["is_symlink"]:
+        try:
+            info["symlink_target"] = str(path.resolve())
+        except Exception:
+            pass
+
+    if info["is_file"] and info["readable"]:
+        if stat_info.st_size > _MAX_SETTINGS_BYTES:
+            info["skipped_read"] = f"size>{_MAX_SETTINGS_BYTES}"
+        else:
+            try:
+                raw_bytes = path.read_bytes()
+                info["sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+                try:
+                    payload = json.loads(raw_bytes.decode("utf-8"))
+                    info["parse_ok"] = True
+                    info["payload"] = _redact_settings_payload(payload)
+                except Exception as exc:
+                    info["parse_ok"] = False
+                    info["parse_error"] = str(exc)
+            except Exception as exc:
+                info["read_error"] = str(exc)
+    return info
+
+
+def _extract_bash_rule_prefix(rule: str) -> Optional[str]:
+    if not rule.startswith("Bash(") or not rule.endswith(")"):
+        return None
+    inner = rule[len("Bash("):-1]
+    star_idx = inner.find("*")
+    if star_idx != -1:
+        inner = inner[:star_idx]
+    return inner
+
+
+def _match_bash_rules(rules: list[str], command: str) -> list[dict[str, str]]:
+    matches: list[dict[str, str]] = []
+    for rule in rules:
+        prefix = _extract_bash_rule_prefix(rule)
+        if prefix is None:
+            continue
+        if command.startswith(prefix):
+            matches.append({"rule": rule, "prefix": prefix})
+    return matches
+
+
 async def _collect_query_events(
     *,
     prompt: str | Any,
@@ -208,8 +339,10 @@ class AgentManager:
         except Exception:
             logger.exception("Failed to ensure project context file at %s", PROJECT_CONTEXT_PATH)
 
-    def _resolve_permission_mode(self, context: Optional[dict]) -> str:
-        mode = context.get("permission_mode", "acceptEdits") if context else "acceptEdits"
+    def _resolve_permission_mode(self, context: Optional[dict]) -> Optional[str]:
+        mode = context.get("permission_mode") if context else None
+        if not mode or mode == "default":
+            return None
         if mode == "bypassPermissions" and os.environ.get("ALLOW_BYPASS_PERMISSIONS", "0") != "1":
             raise PermissionError("permission_mode=bypassPermissions is disabled on this server")
         if (context or {}).get("source") == "webhook" and mode == "bypassPermissions":
@@ -288,6 +421,201 @@ class AgentManager:
         if not merged:
             return None
         return json.dumps(merged)
+
+    def get_debug_info(
+        self,
+        *,
+        context: Optional[dict] = None,
+        commands: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        ctx = context or {}
+        debug: dict[str, Any] = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "runtime": {
+                "python": sys.version.split()[0],
+                "platform": platform.platform(),
+                "cwd": os.getcwd(),
+            },
+        }
+
+        sdk_info: dict[str, Any] = {}
+        try:
+            sdk_info["claude_agent_sdk_version"] = importlib_metadata.version("claude-agent-sdk")
+        except importlib_metadata.PackageNotFoundError:
+            sdk_info["claude_agent_sdk_version"] = None
+            sdk_info["claude_agent_sdk_error"] = "package not found"
+        except Exception as exc:
+            sdk_info["claude_agent_sdk_version"] = None
+            sdk_info["claude_agent_sdk_error"] = str(exc)
+
+        claude_cli_path = shutil.which("claude")
+        claude_cli: dict[str, Any] = {"path": claude_cli_path}
+        if claude_cli_path:
+            try:
+                result = subprocess.run(
+                    [claude_cli_path, "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                claude_cli["returncode"] = result.returncode
+                claude_cli["stdout"] = result.stdout.strip()
+                claude_cli["stderr"] = result.stderr.strip()
+            except Exception as exc:
+                claude_cli["error"] = str(exc)
+
+        debug["runtime"]["sdk"] = sdk_info
+        debug["runtime"]["claude_cli"] = claude_cli
+
+        debug["paths"] = {
+            "workspace_dir": _path_debug_info(WORKSPACE_DIR),
+            "claude_dir": _path_debug_info(WORKSPACE_DIR / ".claude"),
+            "claude_home": _path_debug_info(Path.home() / ".claude"),
+            "workspace_claude_home": _path_debug_info(WORKSPACE_DIR / ".claude-home"),
+            "skills_dir": _path_debug_info(SKILLS_DIR),
+            "commands_dir": _path_debug_info(COMMANDS_DIR),
+            "prompts_dir": _path_debug_info(PROMPTS_DIR),
+            "project_context": _path_debug_info(PROJECT_CONTEXT_PATH),
+            "artifacts_dir": _path_debug_info(WORKSPACE_DIR / "artifacts"),
+        }
+
+        settings_path = WORKSPACE_DIR / ".claude" / "settings.json"
+        local_path = WORKSPACE_DIR / ".claude" / "settings.local.json"
+        user_path = Path.home() / ".claude" / "settings.json"
+        managed_paths = [
+            Path("/etc/claude-code/managed-settings.json"),
+            Path("/Library/Application Support/ClaudeCode/managed-settings.json"),
+            Path("C:/Program Files/ClaudeCode/managed-settings.json"),
+        ]
+
+        settings_info: dict[str, Any] = {
+            "setting_sources": list(_DEFAULT_SETTING_SOURCES),
+            "project": _settings_file_debug(settings_path),
+            "local": _settings_file_debug(local_path),
+            "user": _settings_file_debug(user_path),
+            "managed": [_settings_file_debug(path) for path in managed_paths],
+        }
+
+        merged_settings_raw = self._load_project_settings()
+        merged_settings_payload: Optional[dict[str, Any]] = None
+        if merged_settings_raw:
+            try:
+                merged_settings_payload = json.loads(merged_settings_raw)
+                settings_info["merged_project_local"] = _redact_settings_payload(merged_settings_payload)
+            except Exception as exc:
+                settings_info["merged_project_local_error"] = str(exc)
+        else:
+            settings_info["merged_project_local"] = None
+
+        permissions_summary: dict[str, Any] = {}
+        if isinstance(merged_settings_payload, dict):
+            permissions = merged_settings_payload.get("permissions")
+            if isinstance(permissions, dict):
+                allow_list = permissions.get("allow") if isinstance(permissions.get("allow"), list) else []
+                ask_list = permissions.get("ask") if isinstance(permissions.get("ask"), list) else []
+                deny_list = permissions.get("deny") if isinstance(permissions.get("deny"), list) else []
+                permissions_summary = {
+                    "defaultMode": permissions.get("defaultMode"),
+                    "disableBypassPermissionsMode": permissions.get("disableBypassPermissionsMode"),
+                    "allow_count": len(allow_list),
+                    "ask_count": len(ask_list),
+                    "deny_count": len(deny_list),
+                }
+
+        settings_info["permissions_summary"] = permissions_summary
+        debug["settings"] = settings_info
+
+        permission_mode_input = ctx.get("permission_mode")
+        resolved_permission_mode: Optional[str] = None
+        permission_mode_error: Optional[str] = None
+        try:
+            resolved_permission_mode = self._resolve_permission_mode(ctx)
+        except Exception as exc:
+            permission_mode_error = str(exc)
+
+        permissions_debug = {
+            "context_permission_mode": permission_mode_input,
+            "context_source": ctx.get("source"),
+            "resolved_permission_mode": resolved_permission_mode,
+            "resolve_error": permission_mode_error,
+            "allow_bypass_permissions_env": os.environ.get("ALLOW_BYPASS_PERMISSIONS"),
+            "allow_bypass_permissions_enabled": os.environ.get("ALLOW_BYPASS_PERMISSIONS", "0") == "1",
+            "settings_default_mode": permissions_summary.get("defaultMode"),
+        }
+
+        options_preview: dict[str, Any] = {
+            "cwd": str(WORKSPACE_DIR),
+            "permission_mode": resolved_permission_mode,
+            "setting_sources": list(_DEFAULT_SETTING_SOURCES),
+        }
+
+        if ctx.get("source") == "webhook":
+            webhook_settings_raw = self._build_webhook_settings()
+            try:
+                webhook_payload = json.loads(webhook_settings_raw)
+                options_preview["settings_override"] = _redact_settings_payload(webhook_payload)
+            except Exception as exc:
+                options_preview["settings_override_error"] = str(exc)
+
+        debug["permissions"] = permissions_debug
+        debug["options_preview"] = options_preview
+
+        env_summary = {
+            "ALLOW_BYPASS_PERMISSIONS": os.environ.get("ALLOW_BYPASS_PERMISSIONS"),
+            "WORKSPACE_DIR": os.environ.get("WORKSPACE_DIR"),
+            "SKILLS_DIR": os.environ.get("SKILLS_DIR"),
+            "COMMANDS_DIR": os.environ.get("COMMANDS_DIR"),
+            "PROMPTS_DIR": os.environ.get("PROMPTS_DIR"),
+            "PROJECT_CONTEXT_PATH": os.environ.get("PROJECT_CONTEXT_PATH"),
+            "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL"),
+            "API_KEY_SET": bool(os.environ.get("API_KEY")),
+            "OPENAI_API_KEY_SET": bool(os.environ.get("OPENAI_API_KEY")),
+            "OPENROUTER_API_KEY_SET": bool(os.environ.get("OPENROUTER_API_KEY")),
+            "ANTHROPIC_AUTH_TOKEN_SET": bool(os.environ.get("ANTHROPIC_AUTH_TOKEN")),
+            "ANTHROPIC_API_KEY_SET": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        }
+        debug["env_summary"] = env_summary
+
+        if commands and isinstance(merged_settings_payload, dict):
+            permissions = merged_settings_payload.get("permissions")
+            if isinstance(permissions, dict):
+                allow_list = permissions.get("allow") if isinstance(permissions.get("allow"), list) else []
+                ask_list = permissions.get("ask") if isinstance(permissions.get("ask"), list) else []
+                deny_list = permissions.get("deny") if isinstance(permissions.get("deny"), list) else []
+                previews: list[dict[str, Any]] = []
+                for command in commands:
+                    if not command:
+                        continue
+                    previews.append(
+                        {
+                            "command": command,
+                            "allow_prefix_matches": _match_bash_rules(allow_list, command),
+                            "ask_prefix_matches": _match_bash_rules(ask_list, command),
+                            "deny_prefix_matches": _match_bash_rules(deny_list, command),
+                            "note": "Prefix matching is heuristic and only checks the portion of Bash(...) before the first '*'.",
+                        }
+                    )
+                debug["command_rule_preview"] = previews
+
+        warnings: list[str] = []
+        if permission_mode_input and permission_mode_input != "default":
+            warnings.append("Context permission_mode overrides permissions.defaultMode in settings.")
+        if permission_mode_input == "bypassPermissions" and os.environ.get("ALLOW_BYPASS_PERMISSIONS", "0") != "1":
+            warnings.append("permission_mode=bypassPermissions requested but ALLOW_BYPASS_PERMISSIONS is not enabled.")
+        if "project" not in _DEFAULT_SETTING_SOURCES and settings_info["project"].get("exists"):
+            warnings.append("Project settings exist but setting_sources does not include 'project'.")
+        if "user" not in _DEFAULT_SETTING_SOURCES and settings_info["user"].get("exists"):
+            warnings.append("User settings exist but setting_sources excludes 'user'.")
+        if settings_info["project"].get("parse_ok") is False:
+            warnings.append("Project settings.json failed to parse.")
+        if settings_info["local"].get("parse_ok") is False:
+            warnings.append("Local settings.local.json failed to parse.")
+        if permissions_summary.get("defaultMode") and permission_mode_input:
+            warnings.append("permissions.defaultMode is set but a context permission_mode was also supplied.")
+        debug["warnings"] = warnings
+
+        return debug
 
     async def _register_active_stream(self, user_session_id: str, client: ClaudeSDKClient) -> None:
         async with self._active_streams_lock:

@@ -197,9 +197,9 @@ async def verify_api_key_webhook(
 class ChatContext(BaseModel):
     source: str = "api"
     user_name: Optional[str] = None
-    permission_mode: str = Field(
-        default="acceptEdits",
-        description="Permission mode: 'default', 'acceptEdits' (auto-approve file edits), or 'bypassPermissions' (approve all tools)"
+    permission_mode: Optional[str] = Field(
+        default=None,
+        description="Optional override for permission mode ('default', 'acceptEdits', 'bypassPermissions'). Omit to use settings.json defaultMode."
     )
     prompt_id: Optional[str] = Field(
         default=None,
@@ -254,6 +254,11 @@ class WorkspaceMoveRequest(BaseModel):
     src: str = Field(..., description="Workspace-relative source path")
     dst: str = Field(..., description="Workspace-relative destination path")
     overwrite: bool = Field(default=False, description="Whether to overwrite destination if it exists")
+
+
+class DebugPermissionsRequest(BaseModel):
+    context: Optional[dict] = Field(default=None, description="Optional chat context to resolve permission mode")
+    commands: Optional[list[str]] = Field(default=None, description="Optional bash commands to preview rule matches")
 
 
 def _parse_sip_headers(sip_headers: Optional[list[dict]]) -> dict[str, str]:
@@ -502,7 +507,7 @@ async def chat(request: Request, req: ChatRequest):
             user_session_id=req.session_id,
             message=message,
             images=images,
-            context=req.context.model_dump() if req.context else None,
+            context=req.context.model_dump(exclude_none=True) if req.context else None,
             model=req.model
         )
         return ChatResponse(**result)
@@ -683,7 +688,7 @@ async def chat_stream(request: Request, req: ChatRequest):
                 user_session_id=req.session_id,
                 message=message,
                 images=images,
-                context=req.context.model_dump() if req.context else None,
+                context=req.context.model_dump(exclude_none=True) if req.context else None,
                 model=req.model
             ):
                 yield f"data: {json.dumps(event)}\n\n"
@@ -1258,6 +1263,22 @@ async def get_session(session_id: str, raw: bool = False):
     return session
 
 
+@app.post("/debug/permissions", dependencies=[Depends(verify_api_key)])
+async def debug_permissions(req: DebugPermissionsRequest):
+    """Inspect effective settings, paths, and permission resolution."""
+    if not agent_manager:
+        raise HTTPException(status_code=503, detail="Agent manager not initialized")
+    try:
+        return await asyncio.to_thread(
+            agent_manager.get_debug_info,
+            context=req.context,
+            commands=req.commands,
+        )
+    except Exception:
+        logger.exception("Failed to collect permission debug info")
+        raise HTTPException(status_code=500, detail="Failed to collect debug info")
+
+
 @app.get("/chat.html")
 async def serve_chat_ui():
     """Serve the chat UI."""
@@ -1288,6 +1309,7 @@ async def root():
             "POST /workspace/move": "Move/rename a file or directory in workspace",
             "GET /sessions": "List Claude sessions (newest first)",
             "GET /sessions/{id}": "Get session content (add ?raw=true for raw JSONL)",
+            "POST /debug/permissions": "Inspect effective settings and permission resolution",
             "GET /artifacts/{path}": "Public file access (no auth, no directory listing)",
             "GET /skills": "List installed skills",
             "POST /skills": "Create/update a simple skill (SKILL.md only)",

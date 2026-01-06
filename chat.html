@@ -6032,16 +6032,19 @@ Instructions for Claude on how to use this skill..."></textarea>
             try {
                 // Get permission mode
                 const bypassPermissions = document.getElementById('bypassPermissions').checked;
-                const permissionMode = bypassPermissions ? 'bypassPermissions' : 'acceptEdits';
+
+                const context = {
+                    source: 'web-chat',
+                    user_name: 'User'
+                };
+                if (bypassPermissions) {
+                    context.permission_mode = 'bypassPermissions';
+                }
 
                 const requestBody = {
                     session_id: currentSessionId,
                     message: message,
-                    context: {
-                        source: 'web-chat',
-                        user_name: 'User',
-                        permission_mode: permissionMode
-                    }
+                    context: context
                 };
 
                 if (selectedModel) {
