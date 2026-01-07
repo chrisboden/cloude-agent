@@ -315,24 +315,57 @@ def _settings_file_debug(path: Path, *, redactor=_redact_settings_payload) -> di
     return info
 
 
-def _extract_bash_rule_prefix(rule: str) -> Optional[str]:
+_BASH_WILDCARD_CHARS = ("*", "?", "[")
+
+
+def _extract_bash_rule_pattern(rule: str) -> Optional[str]:
     if not rule.startswith("Bash(") or not rule.endswith(")"):
         return None
-    inner = rule[len("Bash("):-1]
-    star_idx = inner.find("*")
-    if star_idx != -1:
-        inner = inner[:star_idx]
-    return inner
+    return rule[len("Bash("):-1]
+
+
+def _expand_bash_pattern(pattern: str) -> list[str]:
+    candidates = [pattern]
+    if ":" in pattern:
+        before, after = pattern.split(":", 1)
+        candidates.append(before + after)
+        if after:
+            if before.endswith(" ") or after.startswith(" "):
+                candidates.append(before + after)
+            else:
+                candidates.append(f"{before} {after}")
+        else:
+            candidates.append(before)
+    normalized: list[str] = []
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if candidate and candidate not in normalized:
+            normalized.append(candidate)
+    return normalized
+
+
+def _bash_pattern_matches(command: str, pattern: str) -> bool:
+    for candidate in _expand_bash_pattern(pattern):
+        has_wildcards = any(char in candidate for char in _BASH_WILDCARD_CHARS)
+        if has_wildcards:
+            if fnmatch.fnmatch(command, candidate):
+                return True
+            if not candidate.endswith("*") and fnmatch.fnmatch(command, f"{candidate}*"):
+                return True
+        else:
+            if command.startswith(candidate):
+                return True
+    return False
 
 
 def _match_bash_rules(rules: list[str], command: str) -> list[dict[str, str]]:
     matches: list[dict[str, str]] = []
     for rule in rules:
-        prefix = _extract_bash_rule_prefix(rule)
-        if prefix is None:
+        pattern = _extract_bash_rule_pattern(rule)
+        if pattern is None:
             continue
-        if command.startswith(prefix):
-            matches.append({"rule": rule, "prefix": prefix})
+        if _bash_pattern_matches(command, pattern):
+            matches.append({"rule": rule, "pattern": pattern})
     return matches
 
 
@@ -367,7 +400,7 @@ def _match_rule(tool: str, input_data: dict, rule: str) -> bool:
     pattern = rule[len(prefix):-1]
     if tool == "Bash":
         command = input_data.get("command") or ""
-        return command.startswith(pattern)
+        return _bash_pattern_matches(command, pattern)
     if tool in {"Read", "Write", "Edit"}:
         file_path = input_data.get("file_path") or input_data.get("path") or ""
         if not file_path:
@@ -959,7 +992,7 @@ class AgentManager:
                             "allow_prefix_matches": _match_bash_rules(allow_list, command),
                             "ask_prefix_matches": _match_bash_rules(ask_list, command),
                             "deny_prefix_matches": _match_bash_rules(deny_list, command),
-                            "note": "Prefix matching is heuristic and only checks the portion of Bash(...) before the first '*'.",
+                            "note": "Matching is heuristic: Bash rules use simple prefix/glob checks and normalize ':' separators.",
                         }
                     )
                 debug["command_rule_preview"] = previews
