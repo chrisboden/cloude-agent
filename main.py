@@ -1279,6 +1279,23 @@ async def debug_permissions(req: DebugPermissionsRequest):
         raise HTTPException(status_code=500, detail="Failed to collect debug info")
 
 
+@app.get("/debug/permission-log", dependencies=[Depends(verify_api_key)])
+async def get_permission_log(session_id: Optional[str] = None, limit: int = 100):
+    """Return recent permission decisions (newest first)."""
+    if not agent_manager:
+        raise HTTPException(status_code=503, detail="Agent manager not initialized")
+    try:
+        entries = await agent_manager.get_permission_log(session_id=session_id, limit=limit)
+    except Exception:
+        logger.exception("Failed to read permission log")
+        raise HTTPException(status_code=500, detail="Failed to read permission log")
+    return {
+        "session_id": session_id,
+        "limit": limit,
+        "entries": entries,
+    }
+
+
 @app.get("/chat.html")
 async def serve_chat_ui():
     """Serve the chat UI."""
@@ -1310,6 +1327,7 @@ async def root():
             "GET /sessions": "List Claude sessions (newest first)",
             "GET /sessions/{id}": "Get session content (add ?raw=true for raw JSONL)",
             "POST /debug/permissions": "Inspect effective settings and permission resolution",
+            "GET /debug/permission-log": "Fetch recent permission decisions",
             "GET /artifacts/{path}": "Public file access (no auth, no directory listing)",
             "GET /skills": "List installed skills",
             "POST /skills": "Create/update a simple skill (SKILL.md only)",

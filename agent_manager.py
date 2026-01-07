@@ -39,6 +39,27 @@ from claude_agent_sdk.types import (
 import redis.asyncio as redis
 
 logger = logging.getLogger(__name__)
+_PERMISSION_LOGGING_ENABLED = os.environ.get("PERMISSION_LOGGING", "1") == "1"
+_permission_logger = logging.getLogger("cloude.permissions")
+_PERMISSION_LOG_MAX = int(os.environ.get("PERMISSION_LOG_MAX", "200"))
+_PERMISSION_LOG_GLOBAL_KEY = "permission_log:global"
+_PERMISSION_LOG_SESSION_KEY_PREFIX = "permission_log:session:"
+
+
+def _configure_permission_logger() -> logging.Logger:
+    if not _PERMISSION_LOGGING_ENABLED:
+        return _permission_logger
+    if _permission_logger.handlers:
+        return _permission_logger
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "PERMISSION %(asctime)s %(levelname)s session=%(session)s tool=%(tool)s decision=%(decision)s reason=%(reason)s rule=%(rule)s input=%(input)s"
+    )
+    handler.setFormatter(formatter)
+    _permission_logger.addHandler(handler)
+    _permission_logger.setLevel(logging.INFO)
+    _permission_logger.propagate = False
+    return _permission_logger
 
 # Workspace directory for agent file operations
 # Can be overridden via WORKSPACE_DIR env var (for Railway volume mount)
@@ -371,6 +392,37 @@ def _summarize_tool_input(tool: str, input_data: dict) -> str:
     return ""
 
 
+def _redact_sensitive_text(text: str) -> str:
+    if not text:
+        return text
+    redacted = text
+    redacted = re.sub(
+        r"(?i)\b(bearer)\s+([a-z0-9._-]+)",
+        r"\1 <redacted>",
+        redacted,
+    )
+    redacted = re.sub(
+        r"(?i)\b(api[_-]?key|token|secret|password)\s*[:=]\s*([^\s]+)",
+        r"\1=<redacted>",
+        redacted,
+    )
+    redacted = re.sub(
+        r"(?i)--(api[_-]?key|token|secret|password)\s+([^\s]+)",
+        r"--\1 <redacted>",
+        redacted,
+    )
+    return redacted
+
+
+def _sanitize_permission_input(text: str, *, max_len: int = 400) -> str:
+    if not text:
+        return ""
+    cleaned = _redact_sensitive_text(text)
+    if len(cleaned) > max_len:
+        return cleaned[: max_len - 3] + "..."
+    return cleaned
+
+
 async def _collect_query_events(
     *,
     prompt: str | Any,
@@ -543,6 +595,65 @@ class AgentManager:
             return None
         return str(target)
 
+    async def _record_permission_decision(
+        self,
+        *,
+        session_id: str,
+        source: str,
+        tool: str,
+        decision: str,
+        reason: str,
+        rule: Optional[str],
+        input_summary: str,
+    ) -> None:
+        record = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "session_id": session_id,
+            "source": source,
+            "tool": tool,
+            "decision": decision,
+            "reason": reason,
+            "rule": rule,
+            "input": input_summary,
+        }
+        data = json.dumps(record)
+        session_key = f"{_PERMISSION_LOG_SESSION_KEY_PREFIX}{session_id}"
+        try:
+            pipe = self.redis.pipeline()
+            for key in (_PERMISSION_LOG_GLOBAL_KEY, session_key):
+                pipe.lpush(key, data)
+                pipe.ltrim(key, 0, max(_PERMISSION_LOG_MAX - 1, 0))
+            await pipe.execute()
+        except Exception:
+            logger.exception("Failed to store permission decision log")
+
+    async def get_permission_log(
+        self,
+        *,
+        session_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit or 100), 500))
+        key = (
+            f"{_PERMISSION_LOG_SESSION_KEY_PREFIX}{session_id}"
+            if session_id
+            else _PERMISSION_LOG_GLOBAL_KEY
+        )
+        try:
+            raw_items = await self.redis.lrange(key, 0, limit - 1)
+        except Exception:
+            logger.exception("Failed to read permission log")
+            return []
+        entries: list[dict[str, Any]] = []
+        for raw in raw_items:
+            try:
+                if isinstance(raw, (bytes, bytearray)):
+                    raw = raw.decode("utf-8")
+                entries.append(json.loads(raw))
+            except Exception:
+                continue
+        return entries
+
     def _build_permission_handler(
         self,
         *,
@@ -558,16 +669,32 @@ class AgentManager:
         ask_list = permissions.get("ask") if isinstance(permissions.get("ask"), list) else []
         deny_list = permissions.get("deny") if isinstance(permissions.get("deny"), list) else []
         source = (context or {}).get("source") or "unknown"
+        permission_logger = _configure_permission_logger()
 
-        async def can_use_tool(tool: str, input_data: dict) -> bool:
+        async def can_use_tool(tool: str, input_data: dict, *_args, **_kwargs) -> dict:
+            summary = _sanitize_permission_input(_summarize_tool_input(tool, input_data or {}))
             if permission_mode == "bypassPermissions":
-                logger.info(
-                    "Permission decision: session=%s source=%s tool=%s decision=allow reason=bypassPermissions",
-                    user_session_id,
-                    source,
-                    tool,
+                permission_logger.info(
+                    "",
+                    extra={
+                        "session": user_session_id,
+                        "tool": tool,
+                        "decision": "allow",
+                        "reason": "bypassPermissions",
+                        "rule": "",
+                        "input": summary,
+                    },
                 )
-                return True
+                await self._record_permission_decision(
+                    session_id=user_session_id,
+                    source=source,
+                    tool=tool,
+                    decision="allow",
+                    reason="bypassPermissions",
+                    rule=None,
+                    input_summary=summary,
+                )
+                return {"behavior": "allow", "updatedInput": input_data}
 
             matched_rule = None
             decision = "deny"
@@ -596,18 +723,32 @@ class AgentManager:
                         reason = "ask_rule"
                         break
 
-            summary = _summarize_tool_input(tool, input_data or {})
-            logger.info(
-                "Permission decision: session=%s source=%s tool=%s decision=%s reason=%s rule=%s input=%s",
-                user_session_id,
-                source,
-                tool,
-                decision,
-                reason,
-                matched_rule,
-                summary,
+            permission_logger.info(
+                "",
+                extra={
+                    "session": user_session_id,
+                    "tool": tool,
+                    "decision": decision,
+                    "reason": reason,
+                    "rule": matched_rule or "",
+                    "input": summary,
+                },
             )
-            return decision == "allow"
+            await self._record_permission_decision(
+                session_id=user_session_id,
+                source=source,
+                tool=tool,
+                decision=decision,
+                reason=reason,
+                rule=matched_rule,
+                input_summary=summary,
+            )
+            if decision == "allow":
+                return {"behavior": "allow", "updatedInput": input_data}
+            return {
+                "behavior": "deny",
+                "message": f"Blocked by permissions ({reason})",
+            }
 
         return can_use_tool
 
@@ -783,6 +924,12 @@ class AgentManager:
             "ANTHROPIC_API_KEY_SET": bool(os.environ.get("ANTHROPIC_API_KEY")),
         }
         debug["env_summary"] = env_summary
+        debug["permission_logging"] = {
+            "enabled": _PERMISSION_LOGGING_ENABLED,
+            "logger_handlers": len(_permission_logger.handlers),
+            "logger_level": _permission_logger.level,
+            "log_max": _PERMISSION_LOG_MAX,
+        }
 
         if commands and isinstance(merged_settings_payload, dict):
             permissions = merged_settings_payload.get("permissions")
