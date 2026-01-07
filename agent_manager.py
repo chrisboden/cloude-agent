@@ -35,6 +35,8 @@ from claude_agent_sdk.types import (
     SystemMessage,
     UserMessage,
     SystemPromptPreset,
+    PermissionResultAllow,
+    PermissionResultDeny,
 )
 import redis.asyncio as redis
 
@@ -671,7 +673,20 @@ class AgentManager:
         source = (context or {}).get("source") or "unknown"
         permission_logger = _configure_permission_logger()
 
-        async def can_use_tool(tool: str, input_data: dict, *_args, **_kwargs) -> dict:
+        def _allow(updated_input: Optional[dict]) -> PermissionResultAllow:
+            result = PermissionResultAllow()
+            result.updated_input = updated_input
+            return result
+
+        def _deny(message: str) -> PermissionResultDeny:
+            return PermissionResultDeny(message=message)
+
+        async def can_use_tool(
+            tool: str,
+            input_data: dict,
+            *_args,
+            **_kwargs,
+        ) -> PermissionResultAllow | PermissionResultDeny:
             summary = _sanitize_permission_input(_summarize_tool_input(tool, input_data or {}))
             if permission_mode == "bypassPermissions":
                 permission_logger.info(
@@ -694,7 +709,7 @@ class AgentManager:
                     rule=None,
                     input_summary=summary,
                 )
-                return {"behavior": "allow", "updatedInput": input_data}
+                return _allow(input_data)
 
             matched_rule = None
             decision = "deny"
@@ -744,11 +759,8 @@ class AgentManager:
                 input_summary=summary,
             )
             if decision == "allow":
-                return {"behavior": "allow", "updatedInput": input_data}
-            return {
-                "behavior": "deny",
-                "message": f"Blocked by permissions ({reason})",
-            }
+                return _allow(input_data)
+            return _deny(f"Blocked by permissions ({reason})")
 
         return can_use_tool
 
