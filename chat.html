@@ -3315,7 +3315,7 @@ Instructions for Claude on how to use this skill..."></textarea>
                         </svg>
                     </div>
                     <h3>No artifacts yet</h3>
-                    <p>Claude can save files to /artifacts/ to share them publicly.<br>They'll appear here with clickable links.<br>Tip: drag & drop files onto a folder to upload.</p>
+                    <p>Claude can save files to /artifacts/ to share them publicly.<br>They'll appear here with clickable links.<br>Tip: drag & drop files or folders onto a folder to upload.</p>
                 </div>
             `;
         }
@@ -3585,6 +3585,87 @@ Instructions for Claude on how to use this skill..."></textarea>
             return `folder-${String(path || '').replace(/[^a-zA-Z0-9]/g, '-')}`;
         }
 
+        function normalizeArtifactsUploadEntries(fileList) {
+            const list = Array.isArray(fileList) ? fileList : Array.from(fileList || []);
+            const entries = [];
+            for (const item of list) {
+                if (!item) continue;
+                if (item.file && item.file.name) {
+                    entries.push({
+                        file: item.file,
+                        relativePath: item.relativePath || item.file.webkitRelativePath || item.file.name
+                    });
+                } else if (item.name) {
+                    entries.push({
+                        file: item,
+                        relativePath: item.webkitRelativePath || item.name
+                    });
+                }
+            }
+            return entries;
+        }
+
+        function readAllDirectoryEntries(reader) {
+            return new Promise((resolve, reject) => {
+                const entries = [];
+                const readBatch = () => {
+                    reader.readEntries((batch) => {
+                        if (!batch.length) {
+                            resolve(entries);
+                            return;
+                        }
+                        entries.push(...batch);
+                        readBatch();
+                    }, reject);
+                };
+                readBatch();
+            });
+        }
+
+        function getEntryFile(entry) {
+            return new Promise((resolve, reject) => {
+                entry.file(resolve, reject);
+            });
+        }
+
+        async function collectArtifactEntryFiles(entry, basePath) {
+            if (!entry) return [];
+            if (entry.isFile) {
+                const file = await getEntryFile(entry);
+                if (!file) return [];
+                return [{ file, relativePath: `${basePath || ''}${file.name}` }];
+            }
+            if (entry.isDirectory) {
+                const reader = entry.createReader();
+                const entries = await readAllDirectoryEntries(reader);
+                const nextBase = `${basePath || ''}${entry.name}/`;
+                let results = [];
+                for (const child of entries) {
+                    results = results.concat(await collectArtifactEntryFiles(child, nextBase));
+                }
+                return results;
+            }
+            return [];
+        }
+
+        async function getArtifactsDropEntries(dataTransfer) {
+            if (!dataTransfer) return [];
+            const items = Array.from(dataTransfer.items || []).filter(item => item.kind === 'file');
+            const entries = items
+                .map(item => (typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null))
+                .filter(Boolean);
+
+            if (entries.length > 0) {
+                let results = [];
+                for (const entry of entries) {
+                    results = results.concat(await collectArtifactEntryFiles(entry, ''));
+                }
+                if (results.length > 0) return results;
+            }
+
+            return normalizeArtifactsUploadEntries(dataTransfer.files || []);
+        }
+
         function setupArtifactsDropHandling() {
             if (artifactsDropHandlingInstalled) return;
             const contentEl = document.getElementById('artifactsContent');
@@ -3730,7 +3811,7 @@ Instructions for Claude on how to use this skill..."></textarea>
                     return;
                 }
 
-                const files = e.dataTransfer?.files;
+                const files = await getArtifactsDropEntries(e.dataTransfer);
                 if (!files || files.length === 0) return;
 
                 await uploadArtifactsFiles(files, targetPath);
@@ -3744,12 +3825,32 @@ Instructions for Claude on how to use this skill..."></textarea>
                 return;
             }
 
-            const files = Array.from(fileList || []).filter(f => f && f.name);
-            if (files.length === 0) return;
+            const normalized = normalizeArtifactsUploadEntries(fileList);
+            const entries = normalized
+                .map((entry) => {
+                    const rawPath = String(entry.relativePath || entry.file.name || '');
+                    const cleaned = rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
+                    return {
+                        file: entry.file,
+                        relativePath: cleaned || entry.file.name || ''
+                    };
+                })
+                .filter(entry => entry.file && entry.relativePath);
+            if (entries.length === 0) return;
+
+            const seen = new Set();
+            const files = [];
+            for (const entry of entries) {
+                if (seen.has(entry.relativePath)) continue;
+                seen.add(entry.relativePath);
+                files.push(entry);
+            }
 
             const formData = new FormData();
             formData.append('target_dir', targetDir || 'artifacts');
-            for (const f of files) formData.append('files', f);
+            for (const entry of files) {
+                formData.append('files', entry.file, entry.relativePath);
+            }
 
             const refreshBtn = document.getElementById('explorerRefreshBtn');
             const prevDisabled = refreshBtn ? refreshBtn.disabled : false;

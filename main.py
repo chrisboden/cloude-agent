@@ -4,7 +4,7 @@ import time
 import logging
 import asyncio
 from collections import deque
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -978,21 +978,29 @@ async def upload_artifact_files(
 
     uploaded: list[dict] = []
     for f in files:
-        if not f.filename:
+        raw_name = (f.filename or "").replace("\\", "/")
+        if not raw_name:
             continue
-        safe_name = Path(f.filename).name
-        if safe_name in ("", ".", ".."):
+        rel_path = PurePosixPath(raw_name)
+        if rel_path.is_absolute():
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        rel_parts = [part for part in rel_path.parts if part not in ("", ".")]
+        if not rel_parts:
             continue
+        if any(part == ".." for part in rel_parts):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        safe_rel = Path(*rel_parts)
         data = await f.read()
-        dest_path = (dest_dir / safe_name).resolve()
+        dest_path = (dest_dir / safe_rel).resolve()
         try:
             dest_path.relative_to(artifacts_root)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid filename")
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
         dest_path.write_bytes(data)
         uploaded.append(
             {
-                "name": safe_name,
+                "name": safe_rel.name,
                 "path": str(dest_path.relative_to(artifacts_root)),
                 "size": len(data),
             }
