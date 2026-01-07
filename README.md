@@ -35,20 +35,55 @@ You are ready to chat and use the agent.
 - Skills and commands live under `/app/workspace/.claude`.
 - Files placed in `/app/workspace/artifacts` are publicly served at `/artifacts/{path}`.
 
-## API basics
+## API overview
 
-All API calls require `X-API-Key: <API_KEY>` (or `?api_key=` for webhooks).
+All API calls require `X-API-Key: <API_KEY>` unless noted. `/webhook` also accepts `?api_key=` for clients that can’t set headers.
 
-- `POST /chat` — non-streaming chat
-- `POST /chat/stream` — streaming chat (SSE)
-- `POST /webhook` — map external payloads to chat requests
-- `GET /models` — list available models and server defaults
-- `GET/PUT/DELETE /workspace/{path}` — manage workspace files
-- `GET /workspace` — list files in the workspace
-- `POST /artifacts/upload` — upload public files
+Public endpoints (no API key):
+- `GET /health` — health check
+- `GET /chat.html` — chat UI
+- `GET /` — API info
 - `GET /artifacts/{path}` — serve public files
-- `GET/POST/DELETE /skills` — manage skills
-- `GET/POST/DELETE /commands` — manage slash commands
+- `POST /realtime` — OpenAI realtime webhook (validated via `OPENAI_WEBHOOK_SECRET`)
+
+Core agent endpoints:
+- `POST /chat` — non-streaming chat (supports `command` for slash command wrapper)
+- `POST /chat/stream` — streaming chat (SSE, supports `command`)
+- `POST /chat/interrupt` — interrupt an active streaming session
+- `GET /models` — list available models and server defaults
+- `POST /webhook` — map external payloads to chat requests
+
+Workspace endpoints:
+- `GET /workspace` — list files in the workspace
+- `GET /workspace/{path}` — download file from workspace
+- `PUT /workspace/{path}` — create/update a text file
+- `DELETE /workspace/{path}` — delete a file or directory
+- `POST /workspace/move` — move/rename a file or directory
+
+Artifacts:
+- `POST /artifacts/upload` — upload public files
+- `GET /artifacts/{path}` — serve public files (no auth)
+
+Skills:
+- `GET /skills` — list skills
+- `GET /skills/{id}` — get skill content and file listing
+- `POST /skills` — create/update a simple skill (SKILL.md only)
+- `POST /skills/upload` — upload a full skill zip
+- `GET /skills/{id}/download` — download a skill zip
+- `DELETE /skills/{id}` — delete a skill
+
+Commands and prompts:
+- `GET /commands` — list commands
+- `GET /commands/{id}` — get a command
+- `POST /commands` — create/update a command
+- `DELETE /commands/{id}` — delete a command
+- `GET /prompts` — list prompt overrides
+
+Sessions and debug:
+- `GET /sessions` — list sessions (newest first)
+- `GET /sessions/{id}` — get session content (`?raw=true` for JSONL)
+- `POST /debug/permissions` — inspect effective settings + permission resolution
+- `GET /debug/permission-log` — fetch recent permission decisions
 
 ## Model defaults and providers
 

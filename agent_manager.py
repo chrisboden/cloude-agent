@@ -1079,6 +1079,149 @@ class AgentManager:
             json.dumps(trimmed),
             ex=86400 * 7
         )
+
+    def _compose_user_text(
+        self,
+        message: str,
+        *,
+        context: Optional[dict],
+        is_slash_command: bool,
+    ) -> str:
+        if context and not is_slash_command:
+            source = context.get("source", "unknown")
+            user_name = context.get("user_name", "User")
+            return f"[Context: {user_name} via {source}]\n\n{message}"
+        return message
+
+    def _build_message_content(self, text_content: str, images: Optional[list[dict]]) -> Any:
+        if not images:
+            return text_content
+        content: Any = [{"type": "text", "text": text_content}]
+        for img in images:
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.get("media_type", "image/jpeg"),
+                        "data": img["data"],
+                    },
+                }
+            )
+        return content
+
+    def _build_prompt_factory(
+        self,
+        *,
+        text_content: str,
+        content: Any,
+        images: Optional[list[dict]],
+    ):
+        if not images:
+            return lambda: text_content
+
+        async def message_generator():
+            yield {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": content,
+                },
+            }
+
+        return lambda: message_generator()
+
+    def _prepare_settings(
+        self,
+        context: Optional[dict],
+    ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        settings_json: Optional[str] = None
+        settings_path: Optional[str] = None
+        settings_payload: Optional[dict[str, Any]] = None
+
+        if (context or {}).get("source") == "webhook":
+            settings_json = self._build_webhook_settings()
+            try:
+                settings_payload = json.loads(settings_json)
+            except Exception:
+                logger.exception("Failed to parse webhook settings override")
+            settings_path = self._write_settings_cache(settings_json, cache_key="webhook")
+        else:
+            settings_payload = self._load_project_settings_payload(include_local=False)
+            if settings_payload:
+                settings_json = json.dumps(settings_payload)
+            settings_path = self._write_settings_cache(settings_json, cache_key="default")
+
+        return settings_payload, settings_path
+
+    async def _build_system_prompt(
+        self,
+        *,
+        user_session_id: str,
+        context: Optional[dict],
+    ) -> SystemPromptPreset:
+        interrupt_note = await self._consume_interrupt_note(user_session_id)
+        prompt_override = self._load_prompt_override((context or {}).get("prompt_id"))
+        project_context = prompt_override or self._load_project_context()
+        append_parts = [part for part in (project_context, interrupt_note) if part]
+        append_text = "\n\n".join(append_parts) if append_parts else None
+        if append_text:
+            return {
+                "type": "preset",
+                "preset": "claude_code",
+                "append": append_text,
+            }
+        return {"type": "preset", "preset": "claude_code"}
+
+    def _build_agent_options(
+        self,
+        *,
+        user_session_id: str,
+        context: Optional[dict],
+        permission_mode: Optional[str],
+        settings_payload: Optional[dict[str, Any]],
+        settings_path: Optional[str],
+        model: Optional[str],
+        resume_session_id: Optional[str],
+        system_prompt: SystemPromptPreset,
+    ) -> ClaudeAgentOptions:
+        permission_handler = self._build_permission_handler(
+            user_session_id=user_session_id,
+            context=context,
+            permission_mode=permission_mode,
+            settings_payload=settings_payload,
+        )
+        return ClaudeAgentOptions(
+            permission_mode=permission_mode,
+            cwd=str(WORKSPACE_DIR),
+            model=(model or None),
+            resume=resume_session_id,
+            settings=settings_path,
+            system_prompt=system_prompt,
+            setting_sources=list(_DEFAULT_SETTING_SOURCES),
+            can_use_tool=permission_handler,
+        )
+
+    async def _record_conversation(
+        self,
+        *,
+        user_session_id: str,
+        raw_message: str,
+        user_message: str,
+        response_text: str,
+        claude_session_id: Optional[str],
+    ) -> list[dict]:
+        history = await self._get_conversation_history(user_session_id)
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": response_text})
+        await self._store_conversation_history(user_session_id, history)
+
+        if raw_message.startswith("/clear"):
+            await self.redis.delete(f"history:{user_session_id}")
+
+        await self._store_session(user_session_id, claude_session_id=claude_session_id)
+        await self._update_session_activity(user_session_id)
+        return history
     
     async def chat(
         self, 
@@ -1094,27 +1237,14 @@ class AgentManager:
         is_slash_command = raw_message.startswith("/")
 
         # Build the prompt with per-request context, but don't break slash command preprocessing.
-        text_content = message
-        if context and not is_slash_command:
-            source = context.get("source", "unknown")
-            user_name = context.get("user_name", "User")
-            text_content = f"[Context: {user_name} via {source}]\n\n{message}"
+        text_content = self._compose_user_text(
+            message,
+            context=context,
+            is_slash_command=is_slash_command,
+        )
         
         # Build message content - either string or list with images.
-        if images:
-            # Build content array with text and images
-            content: Any = [{"type": "text", "text": text_content}]
-            for img in images:
-                content.append({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": img.get("media_type", "image/jpeg"),
-                        "data": img["data"]
-                    }
-                })
-        else:
-            content = text_content
+        content = self._build_message_content(text_content, images)
         
         tools_used = []
         response_parts = []
@@ -1125,73 +1255,35 @@ class AgentManager:
         if (context or {}).get("source") != "webhook":
             resume_session_id = (stored or {}).get("claude_session_id")
 
-        # Default to acceptEdits (safer), can override to bypassPermissions via API
+        # Resolve explicit permission override; default None means use settings.json defaultMode.
         permission_mode = self._resolve_permission_mode(context)
 
         # Webhook runs are non-interactive; ensure required permission rules are present so we
         # don't hang on approval prompts (e.g., command helpers like save_transcript.py).
-        settings_json: Optional[str] = None
-        settings_path: Optional[str] = None
-        settings_payload: Optional[dict[str, Any]] = None
-        if (context or {}).get("source") == "webhook":
-            settings_json = self._build_webhook_settings()
-            try:
-                settings_payload = json.loads(settings_json)
-            except Exception:
-                logger.exception("Failed to parse webhook settings override")
-            settings_path = self._write_settings_cache(settings_json, cache_key="webhook")
-        else:
-            settings_payload = self._load_project_settings_payload(include_local=False)
-            if settings_payload:
-                settings_json = json.dumps(settings_payload)
-            settings_path = self._write_settings_cache(settings_json, cache_key="default")
+        settings_payload, settings_path = self._prepare_settings(context)
         
-        interrupt_note = await self._consume_interrupt_note(user_session_id)
-        prompt_override = self._load_prompt_override((context or {}).get("prompt_id"))
-        # Set working directory to workspace for file operations and for discovering .claude/commands/ etc.
-        project_context = prompt_override or self._load_project_context()
-        append_system_prompt_parts = [part for part in (project_context, interrupt_note) if part]
-        append_system_prompt = "\n\n".join(append_system_prompt_parts) if append_system_prompt_parts else None
-        system_prompt: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
-        if append_system_prompt:
-            system_prompt = {
-                "type": "preset",
-                "preset": "claude_code",
-                "append": append_system_prompt,
-            }
-        # Always load project settings so permissions/skills apply even with prompt overrides.
-        setting_sources = list(_DEFAULT_SETTING_SOURCES)
-        permission_handler = self._build_permission_handler(
+        system_prompt = await self._build_system_prompt(
+            user_session_id=user_session_id,
+            context=context,
+        )
+        options = self._build_agent_options(
             user_session_id=user_session_id,
             context=context,
             permission_mode=permission_mode,
             settings_payload=settings_payload,
-        )
-        options = ClaudeAgentOptions(
-            permission_mode=permission_mode,
-            cwd=str(WORKSPACE_DIR),
-            model=(model or None),
-            resume=resume_session_id,
-            settings=settings_path,
+            settings_path=settings_path,
+            model=model,
+            resume_session_id=resume_session_id,
             system_prompt=system_prompt,
-            setting_sources=setting_sources,
-            can_use_tool=permission_handler,
         )
         
         # query() enables Claude Code preprocessing for slash commands and !` bash execution.
-        prompt: str | Any
-        if images:
-            async def message_generator():
-                yield {
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": content
-                    }
-                }
-            prompt = message_generator()
-        else:
-            prompt = text_content
+        prompt_factory = self._build_prompt_factory(
+            text_content=text_content,
+            content=content,
+            images=images,
+        )
+        prompt: str | Any = prompt_factory()
 
         claude_session_id: Optional[str] = None
         usage: dict[str, Any] = {}
@@ -1222,17 +1314,13 @@ class AgentManager:
         response_text = "".join(response_parts)
         
         # Update server-side metadata (and keep a lightweight transcript for UI/debugging).
-        history = await self._get_conversation_history(user_session_id)
-        history.append({"role": "user", "content": message})
-        history.append({"role": "assistant", "content": response_text})
-        await self._store_conversation_history(user_session_id, history)
-
-        # If user explicitly cleared context, also clear our local transcript.
-        if raw_message.startswith("/clear"):
-            await self.redis.delete(f"history:{user_session_id}")
-
-        await self._store_session(user_session_id, claude_session_id=claude_session_id)
-        await self._update_session_activity(user_session_id)
+        history = await self._record_conversation(
+            user_session_id=user_session_id,
+            raw_message=raw_message,
+            user_message=message,
+            response_text=response_text,
+            claude_session_id=claude_session_id,
+        )
         
         return {
             "session_id": user_session_id,
@@ -1256,26 +1344,14 @@ class AgentManager:
         is_slash_command = raw_message.startswith("/")
 
         # Build the prompt with per-request context, but don't break slash command preprocessing.
-        text_content = message
-        if context and not is_slash_command:
-            source = context.get("source", "unknown")
-            user_name = context.get("user_name", "User")
-            text_content = f"[Context: {user_name} via {source}]\n\n{message}"
+        text_content = self._compose_user_text(
+            message,
+            context=context,
+            is_slash_command=is_slash_command,
+        )
         
         # Build message content
-        if images:
-            content: Any = [{"type": "text", "text": text_content}]
-            for img in images:
-                content.append({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": img.get("media_type", "image/jpeg"),
-                        "data": img["data"]
-                    }
-                })
-        else:
-            content = text_content
+        content = self._build_message_content(text_content, images)
         
         tools_used = []
         response_parts = []
@@ -1286,55 +1362,24 @@ class AgentManager:
         if (context or {}).get("source") != "webhook":
             resume_session_id = (stored or {}).get("claude_session_id")
         
-        # Default to acceptEdits (safer), can override to bypassPermissions via API
+        # Resolve explicit permission override; default None means use settings.json defaultMode.
         permission_mode = self._resolve_permission_mode(context)
 
-        settings_json: Optional[str] = None
-        settings_path: Optional[str] = None
-        settings_payload: Optional[dict[str, Any]] = None
-        if (context or {}).get("source") == "webhook":
-            settings_json = self._build_webhook_settings()
-            try:
-                settings_payload = json.loads(settings_json)
-            except Exception:
-                logger.exception("Failed to parse webhook settings override")
-            settings_path = self._write_settings_cache(settings_json, cache_key="webhook")
-        else:
-            settings_payload = self._load_project_settings_payload(include_local=False)
-            if settings_payload:
-                settings_json = json.dumps(settings_payload)
-            settings_path = self._write_settings_cache(settings_json, cache_key="default")
+        settings_payload, settings_path = self._prepare_settings(context)
         
-        interrupt_note = await self._consume_interrupt_note(user_session_id)
-        prompt_override = self._load_prompt_override((context or {}).get("prompt_id"))
-        # Set working directory to workspace for file operations and for discovering .claude/commands/ etc.
-        project_context = prompt_override or self._load_project_context()
-        append_system_prompt_parts = [part for part in (project_context, interrupt_note) if part]
-        append_system_prompt = "\n\n".join(append_system_prompt_parts) if append_system_prompt_parts else None
-        system_prompt: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
-        if append_system_prompt:
-            system_prompt = {
-                "type": "preset",
-                "preset": "claude_code",
-                "append": append_system_prompt,
-            }
-        # Always load project settings so permissions/skills apply even with prompt overrides.
-        setting_sources = list(_DEFAULT_SETTING_SOURCES)
-        permission_handler = self._build_permission_handler(
+        system_prompt = await self._build_system_prompt(
+            user_session_id=user_session_id,
+            context=context,
+        )
+        options = self._build_agent_options(
             user_session_id=user_session_id,
             context=context,
             permission_mode=permission_mode,
             settings_payload=settings_payload,
-        )
-        options = ClaudeAgentOptions(
-            permission_mode=permission_mode,
-            cwd=str(WORKSPACE_DIR),
-            model=(model or None),
-            resume=resume_session_id,
-            settings=settings_path,
+            settings_path=settings_path,
+            model=model,
+            resume_session_id=resume_session_id,
             system_prompt=system_prompt,
-            setting_sources=setting_sources,
-            can_use_tool=permission_handler,
         )
         
         # Signal that we're starting
@@ -1344,18 +1389,11 @@ class AgentManager:
         yield {"type": "status", "status": "processing"}
 
         # query() enables Claude Code preprocessing for slash commands and !` bash execution.
-        def build_prompt() -> str | Any:
-            if images:
-                async def message_generator():
-                    yield {
-                        "type": "user",
-                        "message": {
-                            "role": "user",
-                            "content": content
-                        }
-                    }
-                return message_generator()
-            return text_content
+        prompt_factory = self._build_prompt_factory(
+            text_content=text_content,
+            content=content,
+            images=images,
+        )
 
         stream_session_id = resume_session_id or user_session_id
 
@@ -1373,7 +1411,7 @@ class AgentManager:
             try:
                 await client.connect()
                 await self._register_active_stream(user_session_id, client)
-                await client.query(prompt=build_prompt(), session_id=stream_session_id)
+                await client.query(prompt=prompt_factory(), session_id=stream_session_id)
                 async for msg in client.receive_response():
                     if isinstance(msg, SystemMessage):
                         if msg.subtype == "init":
@@ -1433,17 +1471,13 @@ class AgentManager:
         response_text = "".join(response_parts)
         
         # Update server-side metadata (and keep a lightweight transcript for UI/debugging).
-        history = await self._get_conversation_history(user_session_id)
-        history.append({"role": "user", "content": message})
-        history.append({"role": "assistant", "content": response_text})
-        await self._store_conversation_history(user_session_id, history)
-
-        # If user explicitly cleared context, also clear our local transcript.
-        if raw_message.startswith("/clear"):
-            await self.redis.delete(f"history:{user_session_id}")
-
-        await self._store_session(user_session_id, claude_session_id=claude_session_id)
-        await self._update_session_activity(user_session_id)
+        history = await self._record_conversation(
+            user_session_id=user_session_id,
+            raw_message=raw_message,
+            user_message=message,
+            response_text=response_text,
+            claude_session_id=claude_session_id,
+        )
         
         # Yield final done event
         yield {
