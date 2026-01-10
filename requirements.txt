@@ -14,3 +14,5 @@ pyyaml
 beautifulsoup4
 rich
 yt-dlp
+pdfplumber
+numpy
